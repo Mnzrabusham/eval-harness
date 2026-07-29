@@ -1,21 +1,55 @@
 # Data model
 
-The unit of data in this project is a single judgment record: one judge's
-verdict on one response, one row. Every table, estimator, and bias check in
-`stats/`, `bias/`, and `agreement/` operates on collections of these records.
+Three structures: one run-level config, two record types.
 
-## Judgment record
+## RunConfig (one per run_id, immutable once written)
 
-| Field | Description |
-|---|---|
-| `run_id` | Identifies a full eval run. Groups every record produced by a single invocation of the harness, so results from different runs (different dates, configs, or codebases) are never accidentally pooled together. |
-| `item_id` | The input case being evaluated. Identifies the underlying task/prompt/question independent of which variant or generation answered it, so responses to the same item can be compared to each other. |
-| `variant_id` | Which prompt or system variant produced the response. The primary grouping variable for the comparisons this library exists to make — estimators contrast outcomes across `variant_id` values. |
-| `response_id` | The specific generation being judged. Distinguishes individual samples even when they share the same `run_id`, `item_id`, and `variant_id`, since a variant may be sampled multiple times per item. |
-| `gen_seed` | The sampling parameters and random seed used to produce the response. Makes generation reproducible and lets analyses separate genuine variant effects from sampling variance. |
-| `judge_model` | Which model produced the judgment. Required to measure and report judge-specific bias, and to compare or calibrate across judges. |
-| `judge_call_id` | Unique identifier per judge invocation. Repeated judgments of the same response (for measuring judge noise or computing intra-judge agreement) are separate rows rather than overwriting each other. |
-| `presentation_order` | Which variant appeared first in the pairwise prompt. Needed to detect and correct for position bias, which requires counterbalanced presentation. |
-| `judgment` | The judge's output: a preference between two responses, a scalar score, or a binary pass/fail. The outcome variable that every downstream estimator and test is computed on. |
-| `response_tokens` | Token count of the judged response. Used to test for and adjust verbosity bias, i.e. whether judgments correlate with response length independent of quality. |
-| `source_doc_id` | Nullable. Groups items drawn from the same source document. Records sharing a `source_doc_id` are not independent, so this field is required for correct variance estimation (e.g. clustered standard errors) whenever it is non-null. |
+  run_id             identifies a full eval run
+  judgment_type      pairwise | scalar | binary
+  scale_min          scalar only; e.g. 1
+  scale_max          scalar only; e.g. 5
+  ties_allowed       whether the judge may return a tie
+  baseline_variant_id  scenario E only; the frozen baseline
+  created_at
+
+## ResponseJudgment (scalar and binary judgments)
+
+  run_id, item_id, source_doc_id
+  variant_id         which prompt/system variant produced the response
+  response_id        the generation being judged
+  gen_seed           generation sampling params + seed
+  response_tokens    for verbosity analysis
+  judge_model        pinned snapshot id
+  judge_config_id    judge temperature + seed + params
+  judge_call_id      unique per judge invocation; replicates are separate rows
+  annotator_id       human labels only; null for model judges
+  judgment           scalar score or binary pass/fail
+  created_at
+
+## PairwiseJudgment (preference judgments)
+
+  run_id, item_id, source_doc_id
+  pair_id            stable id for the unordered variant pair on this item
+  variant_first, variant_second
+  response_id_first, response_id_second
+  gen_seed_first, gen_seed_second
+  tokens_first, tokens_second
+  judge_model        pinned snapshot id
+  judge_config_id
+  judge_call_id
+  annotator_id       human labels only; null for model judges
+  judgment           first | second | tie
+  created_at
+
+## Constraints
+
+- `judge_model` must be an immutable snapshot id. Floating aliases ending
+  in "-latest" are rejected at write time.
+- `judgment` in PairwiseJudgment is recorded in presentation terms
+  (first/second), never in variant terms. Which variant won is derived at
+  analysis time.
+- `presentation_order` is removed. Under PairwiseJudgment the ordering is
+  structural, so the field is redundant and unverifiable.
+- Human labels use the same records with `annotator_id` populated.
+  Per-annotator identity is required for kappa and Krippendorff's alpha.
+- RunConfig is immutable per `run_id`.
