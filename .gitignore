@@ -29,3 +29,5 @@ htmlcov/
 # Windows
 Thumbs.db
 desktop.ini
+
+validation/results/*.csv

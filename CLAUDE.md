@@ -54,6 +54,9 @@ docs/
 5. Do not add a dependency to make something convenient. numpy, scipy,
    statsmodels, and pytest are the core set.
 
+6. Never run `git commit` or `git push`. Stage changes with `git add` and stop.
+   The author reviews and commits manually.
+
 ## Conventions
 
 - Python 3.11+, `.venv` in repo root.
