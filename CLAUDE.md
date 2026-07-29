@@ -75,8 +75,8 @@ across the codebase. Do not refactor code you were not asked to touch.
 
 ## Status
 
-- [ ] docs/data-model.md
-- [ ] docs/statistics-spec.md
+- [x] docs/data-model.md
+- [x] docs/statistics-spec.md
 - [ ] stats module + validation suite
 - [ ] judge + bias modules
 - [ ] runner
