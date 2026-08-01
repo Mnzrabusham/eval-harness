@@ -62,10 +62,40 @@ def test_pairwise_theta_mapping():
     assert rep.scenario == "A-pairwise"
     eng = rep.engine
     assert rep.estimate == pytest.approx((1 + eng.estimate) / 2)
-    assert rep.ci_low == pytest.approx((1 + eng.ci_low) / 2)
+    # C = 40 < 50: analytic is primary (DECISION D9, §2.1/§2.3).
+    ci_report = rep.extras["ci_report"]
+    assert ci_report["primary_method"] == "analytic"
+    assert rep.ci_low == pytest.approx((1 + eng.analytic.ci_low) / 2)
+    assert rep.ci_high == pytest.approx((1 + eng.analytic.ci_high) / 2)
+    assert ci_report["bootstrap_ci"] == pytest.approx(((1 + eng.ci_low) / 2, (1 + eng.ci_high) / 2))
     assert 0.0 <= rep.estimate <= 1.0
     assert rep.extras["counterbalanced"]
     assert 0.0 <= rep.extras["tie_rate"] <= 1.0
+
+
+def test_ci_primary_switches_with_cluster_count():
+    # C = 200 >= 50: bootstrap is primary; the analytic interval is still
+    # carried alongside it.
+    records, _ = simulate_score_records(n_items=200, delta=0.3, sigma_b=0.3,
+                                        sigma_g=0.0, sigma_j=0.4, r=1, m=2, seed=20)
+    rep = compare_scalar(records, "A", "B", seed=21, n_boot=500, n_perm=500)
+    eng = rep.engine
+    ci_report = rep.extras["ci_report"]
+    assert ci_report["primary_method"] == "bootstrap"
+    assert rep.ci_low == pytest.approx(eng.ci_low)
+    assert rep.ci_high == pytest.approx(eng.ci_high)
+    assert ci_report["analytic_ci"] == pytest.approx((eng.analytic.ci_low, eng.analytic.ci_high))
+    assert "coverage_disclosure" in ci_report
+
+    # C = 30 < 50: analytic is primary.
+    records2, _ = simulate_score_records(n_items=30, delta=0.3, sigma_b=0.3,
+                                         sigma_g=0.0, sigma_j=0.4, r=1, m=2, seed=22)
+    rep2 = compare_scalar(records2, "A", "B", seed=23, n_boot=500, n_perm=500)
+    eng2 = rep2.engine
+    ci_report2 = rep2.extras["ci_report"]
+    assert ci_report2["primary_method"] == "analytic"
+    assert rep2.ci_low == pytest.approx(eng2.analytic.ci_low)
+    assert rep2.ci_high == pytest.approx(eng2.analytic.ci_high)
 
 
 def test_pairwise_uncounterbalanced_flagged():

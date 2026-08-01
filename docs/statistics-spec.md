@@ -42,7 +42,7 @@ report.
 | `n_boot` | 10,000 | bootstrap replicates |
 | `n_perm` | 10,000 | Monte Carlo permutation draws |
 | `enumerate_threshold` | 13 | exhaustive sign-flip enumeration when clusters ≤ 13 (2¹³ = 8,192 flips) |
-| CI method | cluster percentile bootstrap | see §2.1; BCa is FLAGGED F2 |
+| CI method | cluster percentile bootstrap | see §2.1; primary only at C ≥ 50 (DECISION D9); BCa is FLAGGED F2 |
 | Quantile definition | `numpy.quantile(..., method="linear")` | pinned so two implementations agree |
 | RNG | `numpy.random.Generator(numpy.random.PCG64(seed))` | explicit seed, threaded through every stochastic call; no global state |
 | Tie score (pairwise) | 0.5 | DECISION D2 |
@@ -179,6 +179,62 @@ percentile as normative and requires the validation suite (§11) to measure
 and publish the actual coverage; if measured coverage at realistic C is
 unacceptable, revisit this decision rather than patching ad hoc.
 
+**DECISION D9 — analytic interval primary below C = 50.** The evidence F2 was
+deferred pending has arrived (§11.1, reps = 10,000; figures are read from
+`evalkit/stats/coverage_evidence.py`, the single source for this table —
+neither this document nor the code hardcodes a second copy):
+
+| C | bootstrap coverage | analytic coverage (§2.3) |
+|---|---|---|
+| 20 | 92.53% | 94.94% |
+| 30 | 93.48% | 95.02% |
+| 50 | 94.15% | 95.05% |
+| 200 (unclustered) | 94.72% | 95.00% |
+
+(worst cell per C; full grid in `validation/results/coverage_reps10000.csv`)
+
+MC-SE at 10,000 reps is ≈0.22 points, so the C = 20 and C = 30 shortfalls
+(2.47 and 1.52 points — roughly 11σ and 7σ) are real drift, not noise; the
+C = 50 shortfall (0.85 points, ~4σ) is smaller but still measurable; the
+analytic interval tracks nominal throughout the grid.
+
+Below C = 50, the analytic cluster-robust interval (§2.3) is therefore
+*primary* — it is what a report headlines as `ci_low` / `ci_high`. The
+bootstrap is still always computed and disclosed alongside it (§10), never
+dropped; large disagreement between the two remains a diagnostic. At
+C ≥ 50 the roles are as originally specified: bootstrap primary, analytic
+the cross-check.
+
+*Acceptable shortfall and threshold.* The spec treats a 1-percentage-point
+shortfall (a 94.0% floor against 95% nominal) as the acceptable practical
+limit — comfortably above the ~0.22-point MC-SE floor at 10k reps, so it is
+a real, decidable cutoff rather than an artifact of measurement precision,
+and it matches the §11.1 acceptance-band philosophy (D8) of tolerating
+small, controlled undercoverage while treating larger drift as not
+acceptable. C = 50 is the smallest measured C at which the bootstrap
+shortfall (0.85 points) first falls under that floor; C = 30's 1.52-point
+shortfall does not.
+
+*Alternatives considered and rejected:*
+
+- **Threshold at C = 20**, matching the existing generic small-sample
+  warning (§2.4, F4). Rejected: the C = 30 cell still shows a real
+  1.52-point (~7σ) shortfall, so aligning the analytic-primary threshold with
+  F4 would headline C = 20–49 runs with an interval the evidence says
+  under-covers.
+- **A pure significance threshold** (switch primary wherever the measured
+  shortfall exceeds 3×MC-SE, with no minimum-magnitude floor). Rejected:
+  MC-SE shrinks as the validation suite's replication count grows, so a
+  significance-only rule would keep moving the threshold upward over time
+  even if the true shortfall at a given C never changes — it conflates
+  measurement precision with practical importance. A fixed percentage-point
+  floor does not have that failure mode.
+- **A more conservative threshold (e.g. C = 100)**. Rejected: at C = 50 the
+  measured shortfall (0.85 points) is already within the accepted floor and
+  close to the unclustered C = 200 baseline (0.28 points, plausibly noise);
+  moving the threshold higher would discard the bootstrap's role with no
+  coverage evidence behind it.
+
 ### 2.2 Cluster sign-flip permutation test (primary test)
 
 Null hypothesis: within each item, the variant labels are exchangeable —
@@ -248,10 +304,17 @@ lower-tailed); the Monte Carlo version applies the same
 `(1 + #exceed) / (n_perm + 1)` correction. One-sided reports MUST carry
 the F12 caveat when `d` is materially skewed.
 
-### 2.3 Analytic cluster-robust interval (secondary cross-check)
+### 2.3 Analytic cluster-robust interval
 
-Reported alongside the bootstrap, never instead of it; large disagreement
-between the two is itself a diagnostic (skew, outlier cluster, small C).
+Always computed and always reported alongside the bootstrap (§2.1), never
+one instead of the other. Which of the two is *primary* — the interval a
+report headlines as `ci_low` / `ci_high` — depends on the achieved cluster
+count C: analytic below C = 50, bootstrap at or above (DECISION D9, §2.1;
+measured coverage in `evalkit/stats/coverage_evidence.py`). The non-primary
+interval is still always carried in the report (§10) and disclosed with the
+measured coverage that motivates the choice. Large disagreement between the
+two remains a diagnostic in its own right (skew, outlier cluster, small C)
+regardless of which is primary.
 
 - `S_c = Σ_{i ∈ c} d_i`, `n_c = |c|`, `n = Σ n_c`.
 - `SE² = [C / (C − 1)] · Σ_c (S_c − n_c·Δ̂)² / n²`.
@@ -406,7 +469,13 @@ The sign-flip permutation test (with singleton clusters) has exactly this
 null distribution — concordant items flip to themselves and drop out — so
 the two MUST agree up to Monte Carlo error; the validation suite asserts it.
 Mid-p McNemar (subtract half the point mass) is closer to nominal on average
-but not guaranteed conservative; FLAGGED F5, not used.
+but not guaranteed conservative; FLAGGED F5, not used. Measured (§11.2,
+reps = 10,000): the exact test's true rejection rate under the null is 2.79%
+at ψ = 0.3 and 2.08% at ψ = 0.1 against nominal α = 0.05 — conservative by
+construction, a consequence of the McNemar statistic's discreteness (not a
+bug; anti-conservatism is what would fail the build here, and this is the
+opposite). This conservatism is why the exact test's realized power falls
+short of the Connor formula's nominal-level prediction; see §9.1.
 
 **Why the naive choice is wrong.** The naive analysis puts pass counts in a
 2×2 (variant × pass/fail) and runs a chi-square or two-proportion z-test.
@@ -709,7 +778,17 @@ assumption (DECISION D5).
 `Δ = p₊ − p₋`:
 `n = [z_{1−α/2}·√ψ + z_{power}·√(ψ − Δ²)]² / Δ²`.
 Requires a guess of ψ — from a pilot or prior runs; ψ is as important as Δ
-and must be reported as an input.
+and must be reported as an input. Measured (§11.3, reps = 10,000): the
+simulated power of the binary/Connor cell (`binary-connor-n200-psi0.3-delta0.10`)
+falls 3.63 points short of this formula's prediction (analytic 73.65%,
+simulated 70.02%) — within the §11.3 agreement tolerance (±3 points + MC
+error ≈ ±4.3 points at this scale, so not a build failure), but not noise
+either. The cause is §5/F5: the exact McNemar test's true level measures
+2.08–2.79% against the nominal 5%, and a
+test that spends less than its allotted α loses power relative to a formula
+that assumes the nominal level is achieved. Connor's formula is not wrong;
+it is answering "what n hits 80% power at a test that rejects exactly 5% of
+true nulls," and the exact test undershoots that premise by construction.
 
 **Clustering:** multiply n by the design effect
 `DEFF = 1 + (m̄_c − 1)·ρ_c` (m̄_c = mean cluster size, ρ_c = within-cluster
@@ -767,6 +846,10 @@ pooled scale, which is a different quantity.
 
 - estimand name and definition version (spec section)
 - point estimate, CI (level, method, `n_boot`, seed), p-value (test, `n_perm` or "exact"), one/two-sided
+- which CI is primary at the achieved C and why (DECISION D9, §2.1), the
+  non-primary interval alongside it, and the measured-coverage disclosure —
+  stated as what validation measured under simulated conditions, not a
+  claim about this run's own data (`extras["ci_report"]`)
 - n items, C clusters, cluster size distribution, excluded items with reason counts
 - outcome-specific: tie rate (A), score distributions (B), concordance table and n_d (C)
 - judge: `judge_model` snapshot, replicate design (r, m), σ̂²_J, ICC_judge, order balance
@@ -897,11 +980,12 @@ worked around; the data model should be amended (same-commit rule) before
 | D6 | §6 | DECISION | Holm/FWER for confirmatory comparisons; BH/FDR only for declared screening |
 | D7 | §6 | DECISION | no omnibus test gating; direct corrected pairwise contrasts |
 | D8 | §11 | DECISION | coverage/FPR acceptance bands; revisable with same-commit justification |
+| D9 | §2.1, §2.3 | DECISION | analytic cluster-robust interval primary below C = 50, bootstrap primary at C ≥ 50 (measured coverage, `evalkit/stats/coverage_evidence.py`); acceptable shortfall = 1 point below nominal |
 | F1 | §1.2, §3 | FLAGGED | uncounterbalanced runs carry uncorrected position bias; position × variant interaction survives even counterbalancing (measured in `bias/`) |
-| F2 | §2.1 | FLAGGED | percentile bootstrap under-covers at small C / heavy skew; BCa deferred pending measured coverage |
+| F2 | §2.1 | FLAGGED | percentile bootstrap under-covers at small C / heavy skew; evidence arrived (§11.1, 10k reps) — see D9, which makes the analytic interval primary below C = 50 as the mitigation; BCa itself remains deferred |
 | F3 | §4 | FLAGGED | ordinal rubric treated as interval; distribution reported; degenerate scales called out |
 | F4 | §2.4 | FLAGGED | C < 20 warning is a rule of thumb, not a theorem |
-| F5 | §5 | FLAGGED | mid-p McNemar better calibrated on average but not conservative; not used |
+| F5 | §5, §9.1 | FLAGGED | mid-p McNemar better calibrated on average but not conservative; not used. Measured (§11.2, 10k reps): exact test's true level 2.79% (ψ=0.3) / 2.08% (ψ=0.1) vs nominal 5%; this conservatism explains the Connor power cell (§11.3) falling 3.63 points short of its analytic prediction |
 | F6 | §5 | FLAGGED | analytic paired-RD intervals (Tango, Agresti–Min) deferred unless simulation shows bootstrap inadequate at small n_d |
 | F7 | §6 | FLAGGED | Westfall–Young max-T more powerful than Holm, same engine; deferred |
 | F8 | §6 | FLAGGED | Holm p-values vs Bonferroni-level CIs can disagree; inherent, disclosed |

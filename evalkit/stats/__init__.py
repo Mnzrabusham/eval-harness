@@ -6,6 +6,11 @@ commit. Correctness is established by the simulation studies in
 validation/, not by unit tests.
 """
 
+from .coverage_evidence import (
+    MIN_CLUSTERS_ANALYTIC_PRIMARY,
+    coverage_disclosure,
+    primary_ci_method,
+)
 from .engine import AnalyticResult, EngineResult, make_rng, run_engine
 from .mcnemar import discordant_counts, mcnemar_exact
 from .multiplicity import benjamini_hochberg, holm
@@ -51,6 +56,7 @@ __all__ = [
     "JUDGE_RELATIVITY_CAVEAT",
     "JudgeVariance",
     "MATERIAL_SKEW_THRESHOLD",
+    "MIN_CLUSTERS_ANALYTIC_PRIMARY",
     "PairwiseReduction",
     "ScoreReduction",
     "SimulatedPower",
@@ -59,6 +65,7 @@ __all__ = [
     "compare_binary",
     "compare_pairwise",
     "compare_scalar",
+    "coverage_disclosure",
     "design_effect",
     "discordant_counts",
     "holm",
@@ -71,6 +78,7 @@ __all__ = [
     "n_paired_mean",
     "power_binary_paired",
     "power_paired_mean",
+    "primary_ci_method",
     "reduce_pairwise",
     "reduce_scores",
     "run_engine",

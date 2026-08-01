@@ -11,6 +11,7 @@ from math import sqrt
 import numpy as np
 from scipy import stats as _sps
 
+from .coverage_evidence import coverage_disclosure, primary_ci_method
 from .engine import AnalyticResult, EngineResult, run_engine
 from .mcnemar import discordant_counts, mcnemar_exact
 from .reduction import MATERIAL_SKEW_THRESHOLD, reduce_pairwise, reduce_scores, sample_skewness
@@ -211,13 +212,44 @@ def compare_pairwise(records, variant_a: str, variant_b: str, *, seed: int,
                   mde=_achieved_mde(eng.analytic, alpha) / 2.0,
                   sd_d=float(np.std(red.s, ddof=1)) if red.n_items > 1 else float("nan"),
                   ci=((1.0 + eng.ci_low) / 2.0, (1.0 + eng.ci_high) / 2.0),
-                  boot_se=eng.boot_se / 2.0)
+                  boot_se=eng.boot_se / 2.0,
+                  analytic_ci=((1.0 + eng.analytic.ci_low) / 2.0, (1.0 + eng.analytic.ci_high) / 2.0))
     return rep
 
 
 def _report(scenario, estimand, estimate, eng: EngineResult, red, extras,
-            warnings, alpha, seed, *, mde, sd_d, ci=None, boot_se=None) -> ComparisonReport:
-    ci_low, ci_high = ci if ci is not None else (eng.ci_low, eng.ci_high)
+            warnings, alpha, seed, *, mde, sd_d, ci=None, boot_se=None,
+            analytic_ci=None) -> ComparisonReport:
+    """§10 report block. DECISION D9 (docs/statistics-spec.md §2.1, §2.3,
+    §13): below `MIN_CLUSTERS_ANALYTIC_PRIMARY` clusters the analytic
+    cluster-robust interval, not the bootstrap, is the headline `ci_low` /
+    `ci_high` -- measured coverage (evalkit/stats/coverage_evidence.py)
+    shows the bootstrap under-covering there. Both intervals are always
+    carried in `extras["ci_report"]`, named, with the measured-coverage
+    disclosure."""
+    boot_ci = ci if ci is not None else (eng.ci_low, eng.ci_high)
+    analytic_ci = analytic_ci if analytic_ci is not None else (eng.analytic.ci_low, eng.analytic.ci_high)
+    primary = primary_ci_method(eng.n_clusters)
+    warnings = list(warnings)
+    if primary == "analytic" and not (np.isfinite(analytic_ci[0]) and np.isfinite(analytic_ci[1])):
+        # C < 2: no analytic interval to prefer despite being below the D9
+        # threshold; fall back rather than report a NaN as the headline CI.
+        primary = "bootstrap"
+        warnings.append("analytic interval unavailable (C < 2); falling back to "
+                        "bootstrap despite C below the D9 analytic-primary threshold")
+    if primary == "analytic":
+        ci_low, ci_high = analytic_ci
+        ci_method = "analytic-cluster-robust-t (§2.3); primary below C=50 per DECISION D9"
+    else:
+        ci_low, ci_high = boot_ci
+        ci_method = "cluster-percentile-bootstrap (§2.1)"
+    extras = dict(extras)
+    extras["ci_report"] = {
+        "primary_method": primary,
+        "bootstrap_ci": boot_ci,
+        "analytic_ci": analytic_ci,
+        "coverage_disclosure": coverage_disclosure(eng.n_clusters),
+    }
     n_excluded = getattr(red, "n_excluded", 0)
     return ComparisonReport(
         scenario=scenario,
@@ -226,7 +258,7 @@ def _report(scenario, estimand, estimate, eng: EngineResult, red, extras,
         ci_low=float(ci_low),
         ci_high=float(ci_high),
         ci_level=1.0 - alpha,
-        ci_method="cluster-percentile-bootstrap (§2.1)",
+        ci_method=ci_method,
         p_value=eng.p_value,
         test_method=eng.test_method,
         alternative=eng.alternative,
