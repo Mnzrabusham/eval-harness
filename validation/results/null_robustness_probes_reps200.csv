@@ -1,0 +1,13 @@
+kind,C,alternative,rejection_rate,mc_se,nominal,note
+shape-diff,20,two-sided,0.0550,0.0161,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+shape-diff,20,greater,0.0250,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+shape-diff,20,less,0.0700,0.0180,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+shape-diff,50,two-sided,0.0800,0.0192,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+shape-diff,50,greater,0.0350,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+shape-diff,50,less,0.0950,0.0207,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+side-unbalanced,20,two-sided,0.0500,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+side-unbalanced,20,greater,0.0650,0.0174,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+side-unbalanced,20,less,0.0400,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+side-unbalanced,50,two-sided,0.0350,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+side-unbalanced,50,greater,0.0350,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"
+side-unbalanced,50,less,0.0300,0.0154,0.05,"probes weaker mean-zero null; recorded, not build-failing"

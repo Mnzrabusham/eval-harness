@@ -1,0 +1,10 @@
+cell,signflip_fpr,analytic_fpr,mcnemar_fpr,bound,conservative
+scalar-normal-n50,0.0400,0.0450,nan,0.0962,no
+scalar-skewnull-n50,0.0600,0.0600,nan,0.0962,no
+scalar-skewnull-n20,0.0700,0.0600,nan,0.0962,no
+binary-psi0.3-n50,0.0050,0.0100,0.0050,0.0962,no
+binary-psi0.1-n100,0.0250,0.0500,0.0300,0.0962,no
+pref-theta0.5-tie0.2-n50,0.0400,0.0550,nan,0.0962,no
+cluster-normal-C20-rho0.5,0.0700,0.0750,nan,0.0962,no
+cluster-normal-C30-rho0.2,0.0500,0.0500,nan,0.0962,no
+cluster-skewnull-C20-rho0.5,0.0350,0.0350,nan,0.0962,no

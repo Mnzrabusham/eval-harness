@@ -1,0 +1,3 @@
+k,scenario,holm_fwer,bh_fdr,bound,holm_power_nonnull
+5,complete-null,0.0350,0.0400,0.0962,nan
+5,partial-null,0.0600,0.0358,0.0962,0.5375

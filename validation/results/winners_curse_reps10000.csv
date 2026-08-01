@@ -1,0 +1,2 @@
+k_candidates,true_delta,n_items,mean_best_estimate,selection_bias,mc_se,fixed_candidate_bias,fixed_mc_se
+4,0.1,50,0.24472,0.14472,0.00172,-0.00211,0.00201

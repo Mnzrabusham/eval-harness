@@ -1,0 +1,4 @@
+cell,analytic_power,simulated_power,diff,tolerance
+paired-mean-n50-delta0.31,0.5750,0.5900,0.0150,0.1349
+paired-mean-n30-delta0.52,0.7860,0.7050,0.0810,0.1170
+binary-connor-n200-psi0.3-delta0.10,0.7365,0.7150,0.0215,0.1234

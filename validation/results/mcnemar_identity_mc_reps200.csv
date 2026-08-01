@@ -1,0 +1,3 @@
+delta,datasets,included,excluded,excluded_frac,excluded_theoretical,mean_z,mean_bound,rms_z,rms_upper_bound,frac_gt2,frac_gt2_bound,frac_gt3,frac_gt3_bound,max_abs_z,max_tripwire
+0.0,200,156,44,0.22000,0.24125,-0.07289,0.32026,1.12114,1.22646,0.07051,0.11224,0.01282,0.01932,3.13145,4.88910
+0.2,200,160,40,0.20000,0.16637,-0.11291,0.31623,1.03527,1.22361,0.05000,0.11140,0.00000,0.01911,2.44735,4.89656

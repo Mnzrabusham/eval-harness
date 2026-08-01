@@ -1,0 +1,15 @@
+cell,boot_coverage,boot_lower_bound,analytic_coverage,analytic_lower_bound,upper_edge_recorded,conservative
+scalar-normal-n20,0.9050,0.8738,0.9200,0.8838,0.9962,no
+scalar-normal-n50,0.9300,0.9038,0.9400,0.9038,0.9962,no
+scalar-normal-n200,0.9450,0.9038,0.9450,0.9038,0.9962,no
+scalar-skewed-n50,0.9400,0.8838,0.9500,0.8838,0.9962,no
+binary-psi0.3-n50,0.9550,0.8838,0.9550,0.8838,0.9962,no
+binary-psi0.1-n200,0.9650,0.8838,0.9650,0.8838,0.9962,no
+pref-theta0.6-tie0.2-n50,0.9750,0.8838,0.9700,0.8838,0.9962,no
+cluster-normal-C20-rho0.2,0.9200,0.8688,0.9600,0.8838,0.9962,no
+cluster-normal-C20-rho0.5,0.9350,0.8688,0.9550,0.8838,0.9962,no
+cluster-normal-C30-rho0.2,0.9200,0.8788,0.9550,0.8888,0.9962,no
+cluster-normal-C30-rho0.5,0.9200,0.8788,0.9300,0.8888,0.9962,no
+cluster-normal-C50-rho0.2,0.9650,0.8888,0.9700,0.8938,0.9962,no
+cluster-normal-C50-rho0.5,0.9500,0.8888,0.9550,0.8938,0.9962,no
+cluster-skewed-C20-rho0.5,0.9350,0.8538,0.9450,0.8738,0.9962,no
