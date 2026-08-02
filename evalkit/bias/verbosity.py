@@ -96,6 +96,7 @@ def _reduction_diagnostics(red) -> dict:
         "judge_models": red.judge_models,
         "n_pairs_used": red.n_pairs_used,
         "n_pairs_single_order_excluded": red.n_pairs_single_order,
+        "single_order_pair_ids_excluded": red.single_order_pair_ids,
         "n_items_dropped": red.n_items_dropped,
         "n_calls_used": red.n_calls_used,
         "n_calls_equal_length_excluded": red.n_calls_skipped,

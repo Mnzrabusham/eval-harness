@@ -42,6 +42,7 @@ class OrderBalancedReduction:
     n_items_dropped: int  # items whose every pair lacked one order
     n_pairs_used: int
     n_pairs_single_order: int  # excluded from the estimand (§14.1)
+    single_order_pair_ids: tuple  # the pair_ids behind n_pairs_single_order
     n_calls_used: int
     n_calls_skipped: int  # recode returned None (e.g. equal lengths)
     n_calls_same_variant: int  # a variant paired with itself: no order key
@@ -94,13 +95,14 @@ def order_balanced_reduce(records, code) -> OrderBalancedReduction:
     item_ids: list[str] = []
     clusters: list[str] = []
     g_list: list[float] = []
-    pairs_used = single_order = items_dropped = 0
+    single_order_pairs: list[str] = []
+    pairs_used = items_dropped = 0
     for item in sorted(per):
         pair_scores = []
         for pair in sorted(per[item]):
             orders = per[item][pair]["orders"]
             if len(orders) < 2:
-                single_order += 1
+                single_order_pairs.append(pair)
                 continue
             order_means = [float(np.mean(v)) for _, v in sorted(orders.items())]
             pair_scores.append(float(np.mean(order_means)))
@@ -112,12 +114,21 @@ def order_balanced_reduce(records, code) -> OrderBalancedReduction:
         clusters.append(item_cluster[item])
         g_list.append(float(np.mean(pair_scores)))
 
+    single_order = len(single_order_pairs)
     warnings: list[str] = []
     if single_order:
+        # PROMINENT: this is data silently leaving the estimand, not a soft
+        # signal like F11's skew-conditional escalation -- a one-sided pair
+        # included as-is would reintroduce the position bias averaging
+        # across orders exists to cancel, so every affected pair_id is named
+        # (capped, as in reduction.py's F11 warning) alongside the count.
+        head = ", ".join(single_order_pairs[:8]) + (", ..." if single_order > 8 else "")
         warnings.append(
-            f"{single_order} pairs judged in only one presentation order were "
-            f"excluded from the bias estimand ({items_dropped} items dropped "
-            f"entirely); both orders are required for identification (§14.1, D10)"
+            f"PROMINENT: {single_order} pairs excluded from the bias estimand "
+            f"[{head}] for having only one presentation order judged "
+            f"({items_dropped} items dropped entirely because every one of "
+            f"their pairs was excluded); both orders are required for "
+            f"identification (§14.1, D10)"
         )
     if len(judges) > 1:
         warnings.append(
@@ -133,6 +144,7 @@ def order_balanced_reduce(records, code) -> OrderBalancedReduction:
         n_items_dropped=items_dropped,
         n_pairs_used=pairs_used,
         n_pairs_single_order=single_order,
+        single_order_pair_ids=tuple(single_order_pairs),
         n_calls_used=used,
         n_calls_skipped=skipped,
         n_calls_same_variant=same_variant,
