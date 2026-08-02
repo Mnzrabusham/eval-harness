@@ -5,8 +5,8 @@ in `stats/`. It is the source of truth: if code disagrees with this document,
 the code is wrong or this document must be amended in the same commit.
 
 Companion document: `docs/data-model.md` defines the judgment record. Section
-12 lists fields the statistics require that the current schema does not
-provide.
+12 records the schema gaps this spec originally flagged and how
+`docs/data-model.md` resolved each one.
 
 **Normative language.** MUST / MUST NOT are requirements; SHOULD is a default
 that may be overridden with documented justification. Three markers flag
@@ -931,12 +931,13 @@ default per CLAUDE.md.
 
 ---
 
-## 12. Gaps in `docs/data-model.md`
+## 12. Gaps in `docs/data-model.md` (resolved)
 
-The statistics above need the following, which the current schema does not
-provide. These are stated here per instructions rather than silently
-worked around; the data model should be amended (same-commit rule) before
-`stats/` consumes real records.
+The statistics above needed the following, which the schema did not
+originally provide. These were stated here per instructions rather than
+silently worked around. All eight gaps are now resolved in
+`docs/data-model.md`; each item is kept below for history and points at the
+record and field that resolves it.
 
 1. **Pairwise judgments don't fit "one response per row."** A preference
    verdict references *two* responses, but a record has a single
@@ -950,11 +951,17 @@ worked around; the data model should be amended (same-commit rule) before
    implementable from records. This also resolves `response_tokens` for
    verbosity analysis, which needs *both* responses' lengths for a pairwise
    call.
+   **Resolved:** option (b). `PairwiseJudgment` carries
+   `response_id_first` / `response_id_second`, `tokens_first` /
+   `tokens_second`, and `judgment ∈ {first, second, tie}`.
 2. **`presentation_order` semantics are underdetermined.** "Which variant
    appeared first" — as a bare field on a single-response row, it cannot be
    validated against the pair. Under resolution 1(b) it becomes derivable
    (first/second are structural) and should be dropped or defined as
    derived.
+   **Resolved:** dropped. `docs/data-model.md` Constraints: "`presentation_order`
+   is removed. Under `PairwiseJudgment` the ordering is structural, so the
+   field is redundant and unverifiable."
 3. **Judgment type and scale metadata.** Nothing records whether `judgment`
    is a preference, a scalar on [1, 5], a scalar on [0, 100], or binary —
    or whether ties were permitted. Pooling, normalization (§4, §7.3), and
@@ -962,23 +969,40 @@ worked around; the data model should be amended (same-commit rule) before
    `scale_max` / `ties_allowed`, either per record or in a run-level config
    that records reference. Run-level is sufficient; it must exist and be
    immutable per `run_id`.
+   **Resolved:** run-level, as anticipated. `RunConfig` carries
+   `judgment_type`, `scale_min`, `scale_max`, `ties_allowed`, and is
+   immutable per `run_id`.
 4. **Judge sampling parameters and seed.** `gen_seed` covers generation;
    there is no analogue for the judge call. Defining σ²_J (§8) as "variance
    across replicate calls *under the same judge config*" requires knowing
    the config: `judge_seed` / judge temperature (or a `judge_config_id`).
+   **Resolved:** the `judge_config_id` alternative. Both `ResponseJudgment`
+   and `PairwiseJudgment` carry `judge_config_id` ("judge temperature +
+   seed + params").
 5. **Timestamp.** No `created_at`. Scenario E's drift diagnostics and the
    "judgments must be co-batched" rule (§7.1) cannot be audited without it.
+   **Resolved:** `created_at` on `RunConfig`, `ResponseJudgment`, and
+   `PairwiseJudgment`.
 6. **`judge_model` must be pinned.** The field exists but nothing says it
    must be an immutable snapshot id rather than a floating alias
    ("...-latest"). Scenario E (§7.1) and within-run exchangeability (§3)
    require the pin; the data model should state it as a constraint.
+   **Resolved:** `docs/data-model.md` Constraints: "`judge_model` must be
+   an immutable snapshot id. Floating aliases ending in `-latest` are
+   rejected at write time."
 7. **Human judgments.** `agreement/` needs human labels in the same store:
    a way to mark a record as human (e.g., `judge_model = "human"` plus an
    `annotator_id`) — kappa and Krippendorff's alpha need per-annotator
    identity, not just "a human said so."
+   **Resolved:** `annotator_id` on both judgment records ("human labels
+   only; null for model judges"); Constraints: "Human labels use the same
+   records with `annotator_id` populated. Per-annotator identity is
+   required for kappa and Krippendorff's alpha."
 8. **Baseline designation (scenario E).** Which `variant_id` is the frozen
    baseline is run-level configuration; fine to keep out of the record
    schema, but the run config referenced in gap 3 should carry it.
+   **Resolved:** `RunConfig.baseline_variant_id` ("scenario E only; the
+   frozen baseline").
 
 ---
 
