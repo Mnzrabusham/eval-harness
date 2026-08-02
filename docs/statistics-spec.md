@@ -912,6 +912,20 @@ drift. Minimum grid, all seeded, all in-process synthetic data:
    at α = 0.05) fails the build. The exact-null cells in item 2 remain
    build-failing.
 
+9. **Bias estimator recovery (§14.5).** Every `bias/` estimator: inject a
+   known bias into simulated judgment records and recover it within Monte
+   Carlo tolerance, with interval coverage checked at the same cluster
+   counts as the §11.1 clustered grid (C ∈ {20, 30, 50}). Position:
+   additive order effect. Verbosity: controlled padded/condensed arms
+   recovering a known γ, with the manipulation check covering 0 when no
+   artifact effect is injected, plus an artifact cell where the check must
+   recover the injected artifact contrast, plus an observational cell with
+   a known quality–length confound where the association estimator covers
+   the *association* (not γ) and the injected-γ-vs-association gap is
+   published. Self-preference: cross-judge design with a genuine quality
+   gap; naive vs corrected published. The published demonstrations double
+   as documentation (cf. item 7).
+
 Validation studies are marked (`pytest -m validation`) and skipped by
 default per CLAUDE.md.
 
@@ -994,3 +1008,178 @@ worked around; the data model should be amended (same-commit rule) before
 | F11 | §2.2 | FLAGGED | side-unbalanced (r, m) structure breaks symmetry-by-construction under skewed scores; reduction detects it at runtime and warns, prominently when |d̂ skewness| > 1 |
 | F12 | §2.2, §7.2 | FLAGGED | one-sided sign-flip p-values have O(γ/√C) level error under a mean-zero-but-asymmetric null (two-sided: O(1/C)); measured by the §11.8 probes; one-sided reports with materially skewed d carry the caveat |
 | O1 | §7.3 | OPEN | sequential error control regime (per-run α vs alpha spending vs anytime-valid confidence sequences) — depends on how monitoring is operated; per-run-with-framing first, no silent implementation of the others |
+| D10 | §14 | DECISION | bias estimands on the additive probability scale via order-balanced recodes, ties ½; both presentation orders required for bias estimands (single-order pairs excluded and counted, unlike §1.2/F1) |
+| F13 | §14.2 | FLAGGED | position bias is the additive marginal effect; position × variant interaction and non-additive position structure are not separately identified |
+| F14 | §14.3 | FLAGGED | verbosity bias unidentified from observational data: only the association is reported there, and it is named "association" in every public symbol and report field; controlled-manipulation γ̂ assumes quality-preserving, artifact-free rewrites (checked by the padded-vs-condensed manipulation check) and transport to natural pairs is assumed, not identified |
+| F15 | §14.4 | FLAGGED | self-preference cross-judge contrast assumes panel neutrality; panel-shared style preference and self-aligned idiosyncratic taste survive the contrast; the naive self win rate is a labeled diagnostic, never a bias estimate |
+
+---
+
+## 14. Bias measurement (`bias/`)
+
+The preamble's scope limitation: judge-level systematic error is not
+correctable inside `stats/`. This section defines what `bias/` measures,
+exactly, and what it cannot. Every estimator reduces judgment records to an
+item-level vector and hands it to the §2 engine unchanged — `bias/`
+contains no resampling or permutation code of its own. All estimands are
+judge-configuration-relative: a bias estimate describes the judge
+configuration that produced the records, and pooling records from several
+judge configurations estimates a mixture (the report lists the judge models
+present and warns when there is more than one).
+
+(This section follows the decision log so that existing §13 references in
+code and documents stay valid; new D/F entries above index into it.)
+
+### 14.1 Shared reduction: order-balanced recodes
+
+Each estimator applies the §1.2 pipeline shape with a different call-level
+recode `z ∈ {0, ½, 1}` (ties ½ throughout, consistent with D2): average `z`
+within (pair, order) first, then across the two presentation orders, then
+across pairs, then items, giving `g_i ∈ [0, 1]`; the engine runs on
+`d_i = 2·g_i − 1` and the report maps back (self-preference runs on a
+difference of two win-rate-scale scores, already in [−1, 1]). One
+difference from §1.2 (DECISION D10): **both presentation orders are
+required, not preferred.** In §1.2 a single-order pair still estimates the
+win rate (flagged F1); here the across-order average is what cancels the
+nuisance term (content preference in §14.2, position effects in
+§14.3–§14.4), so pairs judged in only one order are excluded from bias
+estimands and the excluded count MUST be reported.
+
+Under each estimator's null — stated in exchangeability form, i.e. no
+effect on *any* pair — the sign-flip test is exact by the §2.2 symmetry
+argument: `z ↦ 1 − z` swaps the roles of the two orders, so `g_i ↦ 1 − g_i`
+is distribution-preserving under the null and `d_i` is symmetric about 0.
+A mean-zero-but-heterogeneous null (some pairs biased up, others down,
+averaging to zero) is outside the exact null exactly as discussed in §2.2.
+
+### 14.2 Position bias
+
+**Definition (what a stated magnitude means).** Under the additive model
+`P(prefer the first-shown response | pair p, order o) = μ_{p,o} + β_p`,
+where `μ_{p,o}` is the order-free preference for whichever response order
+`o` shows first (`μ_{p,U-first} = w_p(U≻V)`, `μ_{p,V-first} = w_p(V≻U)`,
+with `w_p(U≻V) + w_p(V≻U) + P_p(tie) = 1`), position bias is
+`β_pos = E_i[β_i]`: the average increment, in probability points, to a
+response's chance of being preferred from being displayed first. A stated
+`β̂_pos = 0.05` means being shown first adds 5 percentage points to a
+response's preference probability, over and above content preference,
+averaged over the run's pairs and items.
+
+**Estimator.** Recode every call to preference-for-first (`first → 1`,
+`second → 0`, `tie → ½`); reduce per §14.1 to `g_i`;
+`β̂_pos = mean_i(g_i) − ½`. The algebra that makes this work: for a pair
+judged in both orders,
+`g_p = (w_p(U≻V) + w_p(V≻U) + P_p(tie))/2 + β_p = ½ + β_p` — content
+preference and tie propensity cancel exactly, whatever they are. Engine on
+`d = 2g − 1` (so `E[d] = 2·β_pos`); CI and SE map back by halving; the
+p-value tests `β_pos = 0`.
+
+**FLAGGED F13 — what is not identified.** `β_pos` is the additive marginal
+effect. A position × variant interaction (position bias stronger for one
+variant, F1) and any non-additive position structure are not separately
+identified from counterbalanced preference data; they enter the item-level
+variance and widen the CI without moving the point estimate. The report
+carries this limit.
+
+### 14.3 Verbosity: association vs bias
+
+**The estimand people want is causal:** `γ_verb` = the increment in
+preference probability attributable to greater length, quality held fixed.
+
+**FLAGGED F14 — `γ_verb` is not identified from observational judgment
+data.** The observable is the length–preference association
+`A_len = P(longer response preferred)` (order-balanced, ties ½,
+equal-length pairs excluded and counted), and
+`A_len − ½ = γ_verb + (quality–length component)` with the decomposition —
+including the sign of `γ_verb` — unknown. Conditioning fails (no quality
+covariate exists in the record; the judge's own verdict is circular),
+within-item contrasts fail (quality varies with length inside items through
+the same generation process), and no credible instrument shifts length
+without shifting quality (truncation destroys quality mechanically).
+Therefore:
+
+- `bias/` reports `A_len` with an engine CI as a **descriptive
+  association**, never as a bias. **Naming rule (normative):** every public
+  symbol and every report field for the observational quantity says
+  "association"; no public symbol containing "verbosity_bias" may return
+  it. An observational report MUST disclose `A_len`, the per-variant length
+  distributions, and the statement that the bias/quality decomposition is
+  unidentified from this data.
+- A bias estimate requires a **controlled length-manipulation study**:
+  content-matched pairs that differ only in length — an original response
+  vs a padded/expanded rewrite, and an original vs a condensed rewrite —
+  counterbalanced as usual. Then `γ̂ = Â_len − ½` on manipulated pairs,
+  under assumptions: (i) the rewrite is quality-preserving; (ii) the judge
+  responds to length, not to detectable rewrite artifacts.
+
+**Manipulation check (normative for controlled runs).** Assumption (ii) is
+the weakest link and is checkable rather than merely disclosed: estimate
+`γ̂_padded` (original vs padded; longer = manipulated) and `γ̂_condensed`
+(original vs condensed; longer = original) separately. Under a pure length
+response the two agree. Artifact detection pushes them apart in opposite
+directions: a judge that penalizes padding artifacts attenuates
+`γ̂_padded`, one that penalizes condensing artifacts inflates
+`γ̂_condensed` — both drive `γ̂_padded − γ̂_condensed` negative, and
+quality-changing rewrites load on the same contrast. The report MUST show
+both arm estimates and their paired per-item difference with its own CI as
+a manipulation check, not only a pooled `γ̂`; a check interval away from 0
+means the manipulation is detected and the pooled number is not a clean
+length effect.
+
+**What remains unidentified even then:** transportability. `γ̂` measured at
+the manipulated length gaps on the manipulated item set need not equal the
+judge's length effect on natural pairs (the effect may be nonlinear in the
+gap and content-specific), so a run's observed `A_len` still cannot be
+decomposed into bias and quality without assuming `γ` transports; and a
+pairwise-manipulation `γ̂` says nothing about verbosity bias in scalar
+scoring, which is a distinct quantity this spec does not define.
+
+### 14.4 Self-preference bias
+
+**Definition.** For judge `J` whose underlying model produced the "self"
+variant's responses:
+`σ_self = θ_self^{(J)} − mean_{K≠J} θ_self^{(K)}`, where `θ_self^{(X)}` is
+the order-balanced win rate (§1.2, ties ½) of the self variant as scored by
+judge `X` **on the same pairs**. A stated `σ̂_self = 0.08` means judge `J`
+scores its own model's win rate 8 points above what the rest of the judge
+panel scores for identical comparisons.
+
+**Identification.** The naive quantity `θ_self^{(J)} − ½` confounds
+self-preference with the self model's genuine quality (its own outputs may
+actually be better); it MUST NOT be reported as a bias estimate and appears
+only as a labeled diagnostic. The cross-judge contrast removes genuine
+quality because it appears in every judge's score of the same pairs.
+Estimator: `d_i = s_i^{(J)} − mean_K s_i^{(K)}` per item (judges equally
+weighted; items lacking either side excluded and counted); engine on `d`
+directly (win-rate scale).
+
+**Assumption: panel neutrality.** The other judges are, on average,
+unbiased toward or against the self model on these pairs. **FLAGGED F15 —
+residual confounds:** (a) any panel-shared style preference correlated with
+the self model's style survives the contrast and biases `σ̂_self`
+one-for-one (a same-family panel is the worst case; prefer heterogeneous
+panels); (b) judge-idiosyncratic taste that happens to align with the self
+model's style is operationally indistinguishable from self-recognition —
+the contrast attributes it to self-preference; (c) with a single other
+judge, "panel neutrality" rests entirely on that judge and the report MUST
+say so. Position effects cancel provided each judge saw the same
+counterbalanced orders.
+
+### 14.5 Validation
+
+Section 11 item 9: recovery and coverage studies for every §14 estimator at
+the §11.1 clustered grid's cluster counts, including a padded/condensed
+artifact cell demonstrating the manipulation check recovers an injected
+artifact contrast, observational cells publishing the injected-bias vs
+measured-association gap, and self-preference cells publishing naive vs
+corrected.
+
+### 14.6 Report block (per bias estimate)
+
+Quantity name (per the F14 naming rule), whether it is an identified bias
+or a descriptive association, point estimate with primary CI per DECISION
+D9 plus the non-primary interval and the measured-coverage disclosure,
+p-value and the null tested, n items / C clusters / cluster sizes,
+excluded-pair and excluded-item counts with reasons, judge models present,
+the estimand's assumption list and F-flags fired, and — for controlled
+verbosity runs — both arm estimates and the manipulation check.

@@ -1,0 +1,4 @@
+cell,quantity,truth,mean_est,bias,recovery_tol,boot_coverage,boot_lower_bound,analytic_coverage,analytic_lower_bound
+position-C20,beta_pos,0.0600,0.0599,-0.0001,0.0088,0.9450,0.8588,0.9650,0.8738
+position-C30,beta_pos,0.0600,0.0606,+0.0006,0.0072,0.9450,0.8688,0.9600,0.8788
+position-C50,beta_pos,0.0600,0.0624,+0.0024,0.0064,0.9350,0.8788,0.9350,0.8838

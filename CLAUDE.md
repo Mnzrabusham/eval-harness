@@ -81,7 +81,7 @@ across the codebase. Do not refactor code you were not asked to touch.
 - [x] docs/data-model.md
 - [x] docs/statistics-spec.md
 - [ ] stats module + validation suite
-- [ ] judge + bias modules
+- [x] judge + bias modules
 - [ ] runner
 - [ ] agreement module
 - [ ] position bias study

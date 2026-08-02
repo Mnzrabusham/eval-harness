@@ -20,7 +20,11 @@ __all__ = [
     "simulate_d_preference",
     "simulate_d_scalar",
     "simulate_pairwise_records",
+    "simulate_position_bias_records",
     "simulate_score_records",
+    "simulate_self_preference_records",
+    "simulate_verbosity_controlled_records",
+    "simulate_verbosity_observational_records",
 ]
 
 
@@ -208,3 +212,254 @@ def simulate_pairwise_records(*, n_items: int, theta: float, tie_rate: float = 0
                     "judgment": j,
                 })
     return records, {"theta": theta}
+
+
+# ---------------------------------------------------------------------------
+# Bias-injection simulators (spec §14.5, validation item 9). All random
+# effects are uniform (bounded) so preference probabilities stay in range
+# without clipping — a clip would silently change the injected truth.
+
+
+def _check_prob_range(p_min: float, p_max: float, tie_rate: float) -> None:
+    if p_min < 0.0 or p_max + tie_rate > 1.0:
+        raise ValueError(
+            f"preference probabilities out of range: [{p_min:.3f}, {p_max:.3f}] "
+            f"with tie_rate {tie_rate}; shrink the effects or biases"
+        )
+
+
+def _draw_pref_first(rng, p_first: float, tie_rate: float) -> str:
+    u = rng.random()
+    if u < p_first:
+        return "first"
+    if u < p_first + tie_rate:
+        return "tie"
+    return "second"
+
+
+def simulate_position_bias_records(*, n_clusters: int, cluster_size: int,
+                                   beta: float, beta_effect_scale: float = 0.05,
+                                   content_effect_scale: float = 0.12,
+                                   tie_rate: float = 0.1, calls_per_order: int = 1,
+                                   seed: int, variant_a: str = "A", variant_b: str = "B"):
+    """Counterbalanced pairwise records with an injected additive position bias.
+
+    Per item i in cluster c: content preference w_i = u_c + e_i and position
+    effect beta_i = beta + v_c + f_i (uniform effects at cluster and item
+    level, so the item-level position scores are cluster-correlated and the
+    C-cluster coverage cells actually exercise clustering);
+    P(first preferred | order) = (1 - tie_rate)/2 +- w_i + beta_i.
+    Truth: beta_pos = E[beta_i] = beta.
+    """
+    base = (1.0 - tie_rate) / 2.0
+    span = 2.0 * content_effect_scale + abs(beta) + 2.0 * beta_effect_scale
+    _check_prob_range(base - span, base + span, tie_rate)
+    rng = make_rng(seed)
+    records = []
+    for c in range(n_clusters):
+        doc = f"doc{c:05d}"
+        u = rng.uniform(-content_effect_scale, content_effect_scale)
+        v = rng.uniform(-beta_effect_scale, beta_effect_scale)
+        for k in range(cluster_size):
+            w_i = u + rng.uniform(-content_effect_scale, content_effect_scale)
+            beta_i = beta + v + rng.uniform(-beta_effect_scale, beta_effect_scale)
+            item = f"i{c:05d}-{k:03d}"
+            for first, second, w_signed in ((variant_a, variant_b, w_i),
+                                            (variant_b, variant_a, -w_i)):
+                p_first = base + w_signed + beta_i
+                for _ in range(calls_per_order):
+                    records.append({
+                        "item_id": item, "source_doc_id": doc,
+                        "pair_id": f"{item}-p0",
+                        "variant_first": first, "variant_second": second,
+                        "response_id_first": f"{item}-{first}",
+                        "response_id_second": f"{item}-{second}",
+                        "tokens_first": 100, "tokens_second": 100,
+                        "judge_model": "judge-sim-v1",
+                        "judgment": _draw_pref_first(rng, p_first, tie_rate),
+                    })
+    return records, {"beta": beta}
+
+
+def _emit_longer_pair(rng, records, *, item, doc, pair, long_variant, short_variant,
+                      tokens_long, tokens_short, p_long, position_bias, tie_rate,
+                      judge_model):
+    """Both counterbalanced orders of one length-discordant pair.
+
+    ``p_long`` is the order-free probability the longer response is
+    preferred; an additive position effect shifts it by +-position_bias
+    depending on which side is shown first (the order-balanced reduction
+    must cancel it)."""
+    for longer_first in (True, False):
+        p = p_long + (position_bias if longer_first else -position_bias)
+        u = rng.random()
+        if u < p:
+            judgment = "first" if longer_first else "second"
+        elif u < p + tie_rate:
+            judgment = "tie"
+        else:
+            judgment = "second" if longer_first else "first"
+        vf, vs = (long_variant, short_variant) if longer_first else (short_variant, long_variant)
+        tf, ts = (tokens_long, tokens_short) if longer_first else (tokens_short, tokens_long)
+        records.append({
+            "item_id": item, "source_doc_id": doc, "pair_id": pair,
+            "variant_first": vf, "variant_second": vs,
+            "response_id_first": f"{item}-{vf}", "response_id_second": f"{item}-{vs}",
+            "tokens_first": tf, "tokens_second": ts,
+            "judge_model": judge_model,
+            "judgment": judgment,
+        })
+
+
+def simulate_verbosity_observational_records(*, n_clusters: int, cluster_size: int,
+                                             gamma: float, quality_confound: float,
+                                             position_bias: float = 0.04,
+                                             effect_scale: float = 0.1,
+                                             tie_rate: float = 0.1, seed: int,
+                                             tokens_long: int = 300, tokens_short: int = 150,
+                                             variant_a: str = "A", variant_b: str = "B"):
+    """Observational pairs where the judge's true length effect ``gamma`` and
+    a genuine quality-length component ``quality_confound`` both push
+    preference toward the longer response. Only their SUM (the association)
+    is recoverable — that is the point (F14, §14.3).
+
+    The longer response's variant is randomized per item. Truth:
+    association = 1/2 + gamma + quality_confound; gamma itself is
+    deliberately not recoverable from these records.
+    """
+    base = (1.0 - tie_rate) / 2.0
+    lift = gamma + quality_confound
+    span = 2.0 * effect_scale + abs(position_bias)
+    _check_prob_range(base + min(lift, 0.0) - span, base + max(lift, 0.0) + span, tie_rate)
+    rng = make_rng(seed)
+    records = []
+    for c in range(n_clusters):
+        doc = f"doc{c:05d}"
+        u = rng.uniform(-effect_scale, effect_scale)
+        for k in range(cluster_size):
+            w_i = u + rng.uniform(-effect_scale, effect_scale)
+            item = f"i{c:05d}-{k:03d}"
+            longer_is_a = rng.random() < 0.5
+            long_v, short_v = (variant_a, variant_b) if longer_is_a else (variant_b, variant_a)
+            _emit_longer_pair(rng, records, item=item, doc=doc, pair=f"{item}-p0",
+                              long_variant=long_v, short_variant=short_v,
+                              tokens_long=tokens_long, tokens_short=tokens_short,
+                              p_long=base + lift + w_i, position_bias=position_bias,
+                              tie_rate=tie_rate, judge_model="judge-sim-v1")
+    return records, {"gamma": gamma, "quality_confound": quality_confound,
+                     "association": 0.5 + gamma + quality_confound}
+
+
+def simulate_verbosity_controlled_records(*, n_clusters: int, cluster_size: int,
+                                          gamma: float, artifact_padded: float = 0.0,
+                                          artifact_condensed: float = 0.0,
+                                          position_bias: float = 0.04,
+                                          effect_scale: float = 0.1,
+                                          tie_rate: float = 0.1, seed: int,
+                                          original_variant: str = "orig",
+                                          padded_variant: str = "padded",
+                                          condensed_variant: str = "condensed",
+                                          tokens_original: int = 150,
+                                          tokens_padded: int = 300,
+                                          tokens_condensed: int = 80):
+    """Content-matched manipulation arms (§14.3): original vs padded (longer
+    = the manipulated rewrite) with preference-for-longer lift
+    gamma - artifact_padded, and original vs condensed (longer = the
+    original) with lift gamma + artifact_condensed. Artifact detection
+    pushes the two arms apart in opposite directions — exactly what the
+    manipulation check measures.
+
+    Truth: gamma_padded = gamma - artifact_padded,
+    gamma_condensed = gamma + artifact_condensed,
+    check = gamma_padded - gamma_condensed = -(artifact_padded + artifact_condensed),
+    gamma_pooled = gamma + (artifact_condensed - artifact_padded)/2.
+    """
+    if not (tokens_padded > tokens_original > tokens_condensed):
+        raise ValueError("need tokens_padded > tokens_original > tokens_condensed")
+    base = (1.0 - tie_rate) / 2.0
+    lifts = {"pad": gamma - artifact_padded, "cond": gamma + artifact_condensed}
+    span = 2.0 * effect_scale + abs(position_bias)
+    lo = min(lifts.values())
+    hi = max(lifts.values())
+    _check_prob_range(base + min(lo, 0.0) - span, base + max(hi, 0.0) + span, tie_rate)
+    rng = make_rng(seed)
+    records = []
+    for c in range(n_clusters):
+        doc = f"doc{c:05d}"
+        u = rng.uniform(-effect_scale, effect_scale)
+        for k in range(cluster_size):
+            item = f"i{c:05d}-{k:03d}"
+            for arm, long_v, short_v, t_long, t_short in (
+                ("pad", padded_variant, original_variant, tokens_padded, tokens_original),
+                ("cond", original_variant, condensed_variant, tokens_original, tokens_condensed),
+            ):
+                w = u + rng.uniform(-effect_scale, effect_scale)
+                _emit_longer_pair(rng, records, item=item, doc=doc,
+                                  pair=f"{item}-{arm}", long_variant=long_v,
+                                  short_variant=short_v, tokens_long=t_long,
+                                  tokens_short=t_short,
+                                  p_long=base + lifts[arm] + w,
+                                  position_bias=position_bias,
+                                  tie_rate=tie_rate, judge_model="judge-sim-v1")
+    return records, {
+        "gamma": gamma,
+        "gamma_padded": lifts["pad"],
+        "gamma_condensed": lifts["cond"],
+        "check": lifts["pad"] - lifts["cond"],
+        "gamma_pooled": (lifts["pad"] + lifts["cond"]) / 2.0,
+    }
+
+
+def simulate_self_preference_records(*, n_clusters: int, cluster_size: int,
+                                     sigma_self: float, quality_delta: float = 0.05,
+                                     sigma_effect_scale: float = 0.05,
+                                     content_effect_scale: float = 0.08,
+                                     position_bias: float = 0.04,
+                                     tie_rate: float = 0.1, seed: int,
+                                     self_judge: str = "judge-self",
+                                     other_judges: tuple = ("judge-k1",),
+                                     self_variant: str = "self",
+                                     other_variant: str = "other"):
+    """Multi-judge records on identical pairs (§14.4). Per item: genuine
+    preference for the self variant w_i = quality_delta + u_c + e_i, shared
+    by every judge; the self judge adds sigma_i = sigma_self + v_c + f_i
+    (cluster-correlated, so the coverage cells exercise clustering).
+
+    Truth: sigma_self. The naive theta_self^(J) - 1/2 recovers
+    quality_delta + sigma_self instead — published, not asserted equal.
+    """
+    if not other_judges:
+        raise ValueError("at least one other judge required")
+    base = (1.0 - tie_rate) / 2.0
+    wmax = abs(quality_delta) + 2.0 * content_effect_scale
+    bmax = abs(sigma_self) + 2.0 * sigma_effect_scale
+    span = wmax + bmax + abs(position_bias)
+    _check_prob_range(base - span, base + span, tie_rate)
+    rng = make_rng(seed)
+    judges = (self_judge,) + tuple(other_judges)
+    records = []
+    for c in range(n_clusters):
+        doc = f"doc{c:05d}"
+        u = rng.uniform(-content_effect_scale, content_effect_scale)
+        v = rng.uniform(-sigma_effect_scale, sigma_effect_scale)
+        for k in range(cluster_size):
+            w_i = quality_delta + u + rng.uniform(-content_effect_scale, content_effect_scale)
+            sigma_i = sigma_self + v + rng.uniform(-sigma_effect_scale, sigma_effect_scale)
+            item = f"i{c:05d}-{k:03d}"
+            for judge in judges:
+                bias = sigma_i if judge == self_judge else 0.0
+                for first, second, signed in ((self_variant, other_variant, w_i + bias),
+                                              (other_variant, self_variant, -(w_i + bias))):
+                    p_first = base + signed + position_bias
+                    records.append({
+                        "item_id": item, "source_doc_id": doc,
+                        "pair_id": f"{item}-p0",
+                        "variant_first": first, "variant_second": second,
+                        "response_id_first": f"{item}-{first}",
+                        "response_id_second": f"{item}-{second}",
+                        "tokens_first": 150, "tokens_second": 150,
+                        "judge_model": judge,
+                        "judgment": _draw_pref_first(rng, p_first, tie_rate),
+                    })
+    return records, {"sigma_self": sigma_self, "quality_delta": quality_delta,
+                     "naive_theta_excess": quality_delta + sigma_self}
