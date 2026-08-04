@@ -1,6 +1,7 @@
 # Data model
 
-Three structures: one run-level config, two record types.
+Four structures: one run-level config, one run-level request plan, two
+record types.
 
 ## RunConfig (one per run_id, immutable once written)
 
@@ -10,6 +11,16 @@ Three structures: one run-level config, two record types.
   scale_max          scalar only; e.g. 5
   ties_allowed       whether the judge may return a tie
   baseline_variant_id  scenario E only; the frozen baseline
+  created_at
+
+## PlannedJudgeCall (one per intended pairwise judge call, written at request creation, immutable)
+
+  run_id, item_id, source_doc_id
+  pair_id
+  variant_first, variant_second    intended presentation order
+  judge_model, judge_config_id
+  call_role          primary | replicate (spec §12 gap 9, D11)
+  judge_call_id      pre-assigned; the realized PairwiseJudgment echoes it
   created_at
 
 ## ResponseJudgment (scalar and binary judgments)
@@ -37,6 +48,8 @@ Three structures: one run-level config, two record types.
   judge_model        pinned snapshot id
   judge_config_id
   judge_call_id
+  call_role          primary | replicate; assigned at request creation,
+                     immutable (spec §12 gap 9, D11)
   annotator_id       human labels only; null for model judges
   judgment           first | second | tie
   created_at
@@ -53,3 +66,13 @@ Three structures: one run-level config, two record types.
 - Human labels use the same records with `annotator_id` populated.
   Per-annotator identity is required for kappa and Krippendorff's alpha.
 - RunConfig is immutable per `run_id`.
+- `call_role` is immutable once written. Bias estimands consume exactly one
+  primary-labeled call per (pair, order); a replicate is consumed (a
+  "promotion") only when the plan shows a primary was requested and no
+  primary succeeded. Promotions are derived at analysis time by joining
+  records to `PlannedJudgeCall` on `judge_call_id`, never written back.
+- The planned request set (`PlannedJudgeCall`) is written before any judge
+  call is made. A realized judgment whose `judge_call_id` has no plan row,
+  or a (pair, order) with judgments but no planned primary, is a pipeline
+  error: counted separately from promotions and run-blocking (spec §12
+  gap 9, D11).

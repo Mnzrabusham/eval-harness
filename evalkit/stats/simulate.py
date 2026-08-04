@@ -136,28 +136,36 @@ def simulate_d_meanzero_skewed(*, kind: str, n_items: int, seed: int,
 
 def simulate_score_records(*, n_items: int, delta: float, sigma_b: float,
                            sigma_g: float, sigma_j: float, r: int, m: int,
-                           seed: int, m_pattern=None, item_sd: float = 1.0,
+                           seed: int, m_pattern=None, m_pattern_b=None,
+                           item_sd: float = 1.0,
                            variant_a: str = "A", variant_b: str = "B"):
     """Judgment-level records for the §1.2 reduction and §8 estimators.
 
     Model (§8.1): item base t_i ~ N(0, item_sd^2); true difference
     delta_i ~ N(delta, sigma_b^2); response value mu_iv + N(0, sigma_g^2);
     judge call adds N(0, sigma_j^2). ``m_pattern`` (list of ints, cycled
-    across responses) overrides m to create unbalanced judging.
+    across responses) overrides m to create unbalanced judging; it applies
+    to both variants, so the resulting unbalance is side-BALANCED (same
+    (r, m) structure per side — the benign case). ``m_pattern_b``, when
+    given, overrides the pattern for variant B only, deliberately creating
+    the F11 side-unbalanced condition (spec §2.2) that DECISION D4's
+    item-level mirrored replicate draw is specified to avoid (spec §8.2).
 
     Returns (records, truth) where truth holds the generating parameters.
     """
     rng = make_rng(seed)
     records = []
+    pattern_b = m_pattern_b if m_pattern_b is not None else m_pattern
     for i in range(n_items):
         item = f"i{i:06d}"
         t_i = rng.normal(0.0, item_sd)
         delta_i = rng.normal(delta, sigma_b)
-        for v, sign in ((variant_a, 0.5), (variant_b, -0.5)):
+        for v, sign, pattern in ((variant_a, 0.5, m_pattern),
+                                 (variant_b, -0.5, pattern_b)):
             mu = t_i + sign * delta_i
             for j in range(r):
                 value = mu + rng.normal(0.0, sigma_g)
-                mm = m_pattern[j % len(m_pattern)] if m_pattern else m
+                mm = pattern[j % len(pattern)] if pattern else m
                 for k in range(mm):
                     records.append({
                         "item_id": item,

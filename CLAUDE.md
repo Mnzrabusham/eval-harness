@@ -80,9 +80,13 @@ across the codebase. Do not refactor code you were not asked to touch.
 
 - [x] docs/data-model.md
 - [x] docs/statistics-spec.md
-- [ ] stats module + validation suite
+- [x] stats module + validation suite
 - [x] judge + bias modules
-- [ ] runner
+- [x] runner
+- [x] D4 replicate draw is item-level and mirrored across variants
+      (spec §8.2 as amended); ship with a test asserting the drawn
+      subset is side-balanced, so a per-response reimplementation fails
+      loudly instead of just firing F11 warnings downstream
 - [ ] agreement module
 - [ ] position bias study
 - [ ] README and writeup

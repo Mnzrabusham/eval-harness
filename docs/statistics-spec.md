@@ -705,10 +705,18 @@ read σ²_J as the pairwise-call variance.
   `m_r ≥ 2` judge calls:
   `σ̂²_J = Σ_r Σ_j (y_rj − ȳ_r)² / Σ_r (m_r − 1)`.
   Unbiased under any imbalance. Requires a replicate subset: DECISION D4 —
-  every run SHOULD replicate-judge (m = 2) a random subset of at least 30
-  responses (or 20% of responses, whichever is smaller, but never fewer
-  than 10); the subset is drawn with the run's seed. Without it, σ̂²_J is
-  unavailable and the report says so.
+  every run SHOULD replicate-judge (m = 2) a seed-drawn random subset of
+  **items**, mirroring the added calls across both variants so every item
+  retains an identical per-side (r, m) structure; the subset is sized so at
+  least 30 responses (or 20% of responses, whichever is smaller, but never
+  fewer than 10) receive replicate judgments. A per-response draw was the
+  original wording and is rejected: it side-unbalances every replicated
+  item, manufacturing the F11 condition on the scalar/binary paths where
+  replicates enter the reduction — the §11.8 probes measure the resulting
+  level error. For pairwise designs whose primary reduction excludes
+  replicates (e.g. the position-bias study §5), the balance requirement
+  binds the consumed record set rather than the draw. Without a replicate
+  subset, σ̂²_J is unavailable and the report says so.
 - **σ̂²_B** — method of moments from the item-level differences:
   `σ̂²_B = max(0, s²_d − mean_i(σ̂²_W,i))` where `s²_d` is the sample
   variance (ddof=1) of `d_i` and `σ̂²_W,i` plugs σ̂²_J (and σ̂²_G when
@@ -935,9 +943,10 @@ default per CLAUDE.md.
 
 The statistics above needed the following, which the schema did not
 originally provide. These were stated here per instructions rather than
-silently worked around. All eight gaps are now resolved in
-`docs/data-model.md`; each item is kept below for history and points at the
-record and field that resolves it.
+silently worked around. Gaps 1–8 are resolved in `docs/data-model.md`; gap 9
+was identified later, during the position-bias study design, and is resolved
+the same way. Each item is kept below for history and points at the record
+and field that resolves it.
 
 1. **Pairwise judgments don't fit "one response per row."** A preference
    verdict references *two* responses, but a record has a single
@@ -1003,6 +1012,45 @@ record and field that resolves it.
    schema, but the run config referenced in gap 3 should carry it.
    **Resolved:** `RunConfig.baseline_variant_id` ("scenario E only; the
    frozen baseline").
+9. **Primary vs replicate call labeling.** DECISION D4's replicate subset
+   and the §14 bias estimands need to distinguish, on the record, which
+   judge call the primary reduction consumes: the bias reductions require
+   exactly one designated call per (pair, order) (side-balance, F11 — see
+   the position-bias study §5), the pre-launch gate must verify that on
+   realized records, and promotions (a replicate consumed because its
+   primary failed) must be auditable. Deriving the label from the run seed
+   at analysis time was rejected: the gate and the promotion audit are
+   checks on the records, and a derived label turns them into checks on the
+   derivation.
+   A label alone is not enough. If failed calls write no record, "no
+   successful primary, one successful replicate" is ambiguous between a
+   legitimate promotion (primary requested, retries exhausted, replicate
+   covers the side) and a plumbing error (no primary ever requested for
+   that (pair, order)). The first must not block a run; the second must.
+   Between persisting intent and writing records for failed attempts, the
+   spec picks **persisting intent**: a failure record would be a judgment
+   record with no judgment (a nullable `judgment` or a status field on
+   `PairwiseJudgment`), whereas the planned request set is data the runner
+   already computes at request-creation time.
+   **Resolved:** two additions to `docs/data-model.md`.
+   (a) `PairwiseJudgment.call_role ∈ {primary, replicate}`, assigned at
+   request-creation time, immutable once written. (b) `PlannedJudgeCall`:
+   the full planned request set, one row per intended judge call, written
+   at request-creation time before any call is made, immutable, carrying
+   the pre-assigned `judge_call_id` that the realized record echoes. The
+   gate joins realized records to the plan on `judge_call_id` and
+   classifies each (pair, order):
+   - planned primary succeeded → normal;
+   - planned primary exists, no successful primary record, replicate
+     succeeded → **promotion** — counted, does not block;
+   - a realized record with no matching planned call, or a (pair, order)
+     with records but no planned primary → **plumbing error** — counted
+     separately, blocks the run;
+   - neither planned call succeeded → the pair falls to the D10 exclusion
+     path and is counted.
+   Promotion is never written back (the reduction derives it from records
+   plus plan); the promotion count and the plumbing-error count are
+   separate report fields (DECISION D11).
 
 ---
 
@@ -1013,7 +1061,7 @@ record and field that resolves it.
 | D1 | §0, §7.2 | DECISION | α = 0.05 two-sided default; one-sided allowed when pre-declared (regression/non-inferiority) |
 | D2 | §1.2, §3 | DECISION | ties score 0.5 in the win rate; conditional win rate secondary; tie rate always reported |
 | D3 | §1.3 | DECISION | items equally weighted (cluster-equal weighting changes the estimand; cluster sizes reported) |
-| D4 | §8.2 | DECISION | replicate-judging subset (m = 2, ≥ 10–30 responses) per run to estimate σ²_J |
+| D4 | §8.2 | DECISION | replicate-judging subset (m = 2, ≥ 10–30 responses) per run to estimate σ²_J; drawn per item and mirrored across variants (side-balanced by construction, F11) — never per response |
 | D5 | §9.1 | DECISION | planning default σ_s = 0.4 for preference when no pilot exists; labeled assumption |
 | D6 | §6 | DECISION | Holm/FWER for confirmatory comparisons; BH/FDR only for declared screening |
 | D7 | §6 | DECISION | no omnibus test gating; direct corrected pairwise contrasts |
@@ -1033,6 +1081,7 @@ record and field that resolves it.
 | F12 | §2.2, §7.2 | FLAGGED | one-sided sign-flip p-values have O(γ/√C) level error under a mean-zero-but-asymmetric null (two-sided: O(1/C)); measured by the §11.8 probes; one-sided reports with materially skewed d carry the caveat |
 | O1 | §7.3 | OPEN | sequential error control regime (per-run α vs alpha spending vs anytime-valid confidence sequences) — depends on how monitoring is operated; per-run-with-framing first, no silent implementation of the others |
 | D10 | §14 | DECISION | bias estimands on the additive probability scale via order-balanced recodes, ties ½; both presentation orders required for bias estimands (single-order pairs excluded and counted, unlike §1.2/F1) |
+| D11 | §12 gap 9, §14.1 | DECISION | judge-call labels stored on the record (`call_role`, request-creation time, immutable); bias reductions consume the primary-labeled call and fall back to a successful replicate only when the persisted plan (`PlannedJudgeCall`) shows a primary was requested and failed — a promotion, derived at analysis time and counted; records unexplained by the plan are plumbing errors, counted separately and run-blocking |
 | F13 | §14.2 | FLAGGED | position bias is the additive marginal effect; position × variant interaction and non-additive position structure are not separately identified |
 | F14 | §14.3 | FLAGGED | verbosity bias unidentified from observational data: only the association is reported there, and it is named "association" in every public symbol and report field; controlled-manipulation γ̂ assumes quality-preserving, artifact-free rewrites (checked by the padded-vs-condensed manipulation check) and transport to natural pairs is assumed, not identified |
 | F15 | §14.4 | FLAGGED | self-preference cross-judge contrast assumes panel neutrality; panel-shared style preference and self-aligned idiosyncratic taste survive the contrast; the naive self win rate is a labeled diagnostic, never a bias estimate |

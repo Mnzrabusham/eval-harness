@@ -26,9 +26,11 @@ first adds 5 percentage points of preference probability.
 
 The estimator is the §14.2 order-balanced recode: every judge call recoded to
 preference-for-first (first → 1, second → 0, tie → ½), averaged within
-(pair, order), then across the two orders, then across pairs within an item,
-giving `g_i`; `β̂_pos = mean(g_i) − ½`; the §2 engine runs on `d_i = 2g_i − 1`
-and CIs/SEs map back by halving. Content preference and tie propensity cancel
+(pair, order), then across the two orders, giving one `g` per pair. Each
+pair is registered as its own item (`item_id` = pair id — the unit pinning
+in §4), so §14.1's across-pairs-within-item step is trivial and `g_i` ranges
+over the 600 pairs; `β̂_pos = mean(g_i) − ½`; the §2 engine runs on
+`d_i = 2g_i − 1` and CIs/SEs map back by halving. Content preference and tie propensity cancel
 exactly for any pair judged in both orders — this is counterbalancing by
 construction, not by randomization.
 
@@ -118,10 +120,38 @@ Each prompt contributes **two pairs**, one per stratum, 600 pairs total:
   prompts would make the "worse" response detectably unnatural and would
   poison later reuse).
 - **Near-tie stratum (300 pairs):** two independent samples from
-  `claude-sonnet-5` at its default decoding. The two arms are exchangeable by
-  construction, so expected content preference is exactly ½ — this stratum is
-  where position bias has the most room to act and doubles as a negative
-  control for content effects.
+  `claude-sonnet-5` under the pinned generation config below, differing only
+  in their `gen_seed` values (a cache discriminator, not a decoding control —
+  §3.3). The two arms are exchangeable by construction, so expected content
+  preference is exactly ½ — this stratum is where position bias has the most
+  room to act and doubles as a negative control for content effects.
+
+**Generation config (pinned, all arms, recorded in the frozen artifacts):**
+
+- `claude-sonnet-5` arms (both strata): **thinking disabled explicitly**
+  (`thinking: {"type": "disabled"}`, which Sonnet 5 accepts). Sonnet 5's
+  *default* is adaptive thinking, whose tokens bill as output: "default
+  decoding" would make the §6.5 generation line unbounded and would leave
+  the frozen artifacts' config implicit. No sampling parameters (Sonnet 5
+  rejects non-default values); a `max_tokens` ceiling sized for the 150–350
+  word instruction.
+- `claude-haiku-4-5` arm (clear-gap weak arm): no thinking (its default —
+  recorded explicitly rather than assumed), default sampling.
+
+**DESIGN DECISION — thinking-off generation.** Thinking-on generation
+plausibly yields more diverse near-tie arms, but makes per-response output
+cost unbounded (the same tradeoff as for judges, §2) and was the unpriced
+hole in the §6.5 budget. Thinking-off keeps the generation line a planning
+number. Dependency with §3.3/§11 item 5, stated explicitly: the near-tie
+stratum needs *stochastic* decoding — its two arms differ only because
+sampling is nondeterministic, since the API offers no seed and `gen_seed`
+is only a cache discriminator. The pinned config retains stochastic
+sampling (Sonnet 5 exposes no temperature control; its decoding samples
+stochastically with thinking on or off), but pinning any config toward
+determinism shrinks arm divergence, so the §11 item 5 distinctness gate is
+the empirical check that this config still produces distinct arms. If that
+gate trips, the remedy is a config revision (e.g. re-enable thinking for
+generation, re-budget §6.5) — never a weakened gate.
 
 Rationale for the mixture: β_pos averaged over an all-decisive bank would be
 attenuated toward whatever the judge does on easy calls; over an all-coin-flip
@@ -156,10 +186,27 @@ curate carefully. The power analysis in §6 charges the design effect.
   interaction, which is a special case of F13 and carries the same
   disclosure.
 - **Reproducibility:** the API offers no generation seed, so `gen_seed` in
-  the data model cannot be honored; reproducibility is at the artifact level —
-  all responses are generated once, frozen, stored with full request config,
-  and every judge sees the identical frozen pairs. Recorded as a data-model
-  deviation.
+  the data model cannot be honored as a decoding control; reproducibility is
+  at the artifact level — all responses are generated once, frozen, stored
+  with full request config, and every judge sees the identical frozen pairs.
+  Recorded as a data-model deviation. `gen_seed` is still populated and
+  load-bearing — as a cache discriminator (next bullet).
+- **Caching vs. arm independence.** The runner's response cache keys on
+  (prompt, model, seed, sampling params) — `ResponseCache.key` includes no
+  variant or sample index — so the two near-tie generation requests built
+  the obvious way (same prompt, same model, same config) collide in the
+  cache and one completion is returned for both arms. The two arms MUST
+  therefore carry distinct `gen_seed` values, which enter the cache key.
+  Because the API has no generation seed parameter, `gen_seed` does not
+  control decoding here: it functions as a cache discriminator only, and
+  the arms differ because decoding is nondeterministic under the pinned
+  generation config (§3.2). Identical arms cannot be caught downstream by
+  the §8(h) exchangeability check — identical strings are trivially
+  exchangeable and produce ties, not asymmetry — so distinctness gets its
+  own hard pre-judging gate (§11 item 5). Dependency, stated once here and
+  in §3.2: any generation-config change that moves decoding toward
+  determinism re-creates this failure mode without the cache's involvement,
+  which is why the §11 gate checks realized strings, not request plumbing.
 
 ---
 
@@ -176,6 +223,20 @@ curate carefully. The power analysis in §6 charges the design effect.
 Judge calls: 600 pairs × 2 orders × 3 judges = 3,600 primary calls, plus the
 replicate subset (§5). Every judge sees every pair in both orders — the
 cross-judge secondary contrasts are fully paired at the pair level.
+
+**DESIGN DECISION — unit pinning: `item_id` = pair, `source_doc_id` =
+prompt.** Records register each pair as its own item; the two pairs of a
+prompt share a `source_doc_id`, making the prompt the cluster. While every
+prompt retains both pairs, the alternative reading (item = prompt, the two
+pairs averaged into one g per prompt, 300 singleton clusters) yields the
+identical point estimate and identical cluster-robust SE — the cluster sums
+coincide. The two stop being the same estimand the moment D10 excludes one
+pair of a prompt: pair-as-item keeps equal weight per surviving pair, while
+prompt-as-item would promote a surviving pair to its whole prompt's weight.
+This study pre-registers pair-as-item — equal weight per pair over the
+realized bank, the D3 analog already declared in §3.2 — and every reported
+n (600) and C (300) follows it. §1's reduction wording states the same pin;
+the runner MUST populate `item_id` and `source_doc_id` accordingly.
 
 Clustering: `cluster(i) = prompt_id` (spec §1.4; the two pairs from one
 prompt share topic and share the near-tie arms' generator). C = 300 ≥ 50, so
@@ -211,23 +272,43 @@ that every item enters with an identical (r = 1, m = 1)-per-order structure.
 The rule:
 
 - Every judge call is labeled **primary** or **replicate** at request-creation
-  time (by the run seed — never by completion order, which could correlate
-  with load or content).
+  time (drawn by the run seed — never by completion order, which could
+  correlate with load or content), and the label is **stored on the record**
+  as `PairwiseJudgment.call_role` (spec §12 gap 9). It is not re-derived from
+  the run seed at analysis time: the F11 gate below and the promotion audit
+  are checks on the realized records, and a derived label would make them
+  checks on the derivation instead.
 - The primary reduction consumes **exactly one call per (pair, order)**: the
   primary-labeled call. If a primary call fails and its retries are exhausted,
-  the replicate call for that (pair, order) may be promoted — promotion is a
-  relabeling that preserves one-call-per-side, and the count of promotions is
-  reported.
+  the replicate call for that (pair, order) may be promoted — promotion is
+  not a stored mutation (`call_role` is immutable once written) but an
+  analysis-time designation derived purely from the records: a (pair, order)
+  with no successful primary-labeled call and a successful replicate-labeled
+  one is a promotion, preserving one-call-per-side, and the derived count of
+  promotions is reported.
 - Replicate calls feed **only** σ̂²_J (pooled within-(pair, order) variance,
   §8.2), ICC_judge, and the achieved-MDE inputs.
 
 **Pre-launch assertion on realized data:** before the engine runs, the
 reduction's F11 side-balance check (spec §2.2) is executed over the realized
 judgment records as a hard gate, not a warning — every item entering the
-primary reduction must have exactly one primary call in each order. Any
-violation (double-submitted retries, batch duplicates) is repaired to one
-call per side by the request-time labels, or the pair is excluded under D10
-and counted. §8 item (c) covers the exclusion-asymmetry consequence.
+primary reduction must have exactly one primary call in each order. The gate
+joins realized records to the persisted request plan (`PlannedJudgeCall`,
+spec §12 gap 9 / D11) on the pre-assigned `judge_call_id`, which is what
+lets it tell apart the two cases that look identical in records alone:
+
+- **Promotion** — the plan shows a primary was requested for that
+  (pair, order), it failed with retries exhausted, and the replicate covers
+  the side. Counted, does not block.
+- **Plumbing error** — a realized record with no matching planned call, or
+  a (pair, order) whose plan contains no primary at all. Counted
+  separately, and blocks the analysis until explained.
+
+Any repairable violation (double-submitted retries, batch duplicates) is
+repaired to one call per side by the stored `call_role` labels; a side left
+uncovered falls to the D10 exclusion path and is counted. Promotion count,
+plumbing-error count, and exclusion count are separate fields in the §14.6
+report. §8 item (c) covers the exclusion-asymmetry consequence.
 
 The subset yields σ̂²_J and ICC_judge per judge for the report (§14.6) and
 feeds the achieved-MDE calculation. It is not needed for validity (§1.1 of
@@ -295,18 +376,46 @@ to answer.
 
 The outcome is discrete and clustered, so per §9.2 the analytic grid above is
 planning-only. **Before spending API budget**, run `mde_simulated` /
-`simulated_power` with a generative model matching the design (5-point g
-support from a decisive/coin-flip pair mixture, C = 300 × 2, prompt-level ρ,
-injected additive β), through the *actual* §2 pipeline. Launch gate: simulated
-MDE at Holm-worst α within +0.01 of the analytic value (i.e. ≤ ~0.06);
-otherwise revisit n before generating anything. This shares the §11.9
-simulator (see §11 prerequisites).
+`simulated_power` with a generative model matching the design — 300 prompts ×
+2 pairs, one decisive pair (g concentrated at ½) and one coin-flip pair
+(Var(g) = ⅛ at one call per order) per prompt, prompt-level ρ = 0.2, a tie
+propensity in the plausible range, injected additive β with modest
+heterogeneity — through the *actual* §2 pipeline, sharing the §11.9 simulator
+(see §11 prerequisites).
+
+**This generative model's pair-level SD is σ_g ≈ 0.25** (mixture variance
+½·0 + ½·⅛ = 1/16, plus a small heterogeneity term), *not* the deliberately
+conservative planning value σ_g = 0.40 of §6.1. The two must not be compared:
+a gate that checks simulated MDE against the σ_g = 0.40 analytic value
+(≈ 0.058) would pass even if the pipeline silently consumed 30%+ of the
+power, because the generative model's own MDE (≈ 0.036) sits far below the
+planning value regardless of pipeline health.
+
+**Launch gate (must be able to fail):** the analytic comparator is
+`mde_paired_mean` recomputed at the generative model's *realized* σ_g — the
+mean over simulation reps of sd(g_i), reported next to the gate result — at
+Holm-worst α = 0.05/3, design effect 1.2, mapped to the β scale by halving.
+At σ_g ≈ 0.25 the comparator is ≈ 0.036 (the §6.2 table's first row). The
+gate passes iff **simulated MDE ≤ analytic comparator + 0.01**. A miss means
+the pipeline (reduction, exclusion handling, engine) is losing power the
+like-for-like analytic formula does not predict — an implementation or
+design problem, not a variance surprise — and the study MUST NOT launch
+until the discrepancy is explained and resolved. The +0.01 allowance covers
+the discreteness of the 5-point g support and `mde_simulated`'s bisection
+tolerance; it is not headroom for pipeline loss. The σ_g = 0.40 planning
+value keeps its separate role: it sizes n and the budget (§6.1–§6.3); the
+gate checks machinery, not the planning assumption.
 
 ### 6.5 Budget
 
 Token planning values: judge call ≈ 1,100 input (instructions + prompt + two
 150–350-word responses) + ≤ 64 output (structured verdict); generation ≈ 120
-input + 350 output.
+input + 350 output **with thinking disabled (§3.2)**. Under Sonnet 5's
+default adaptive thinking, thinking tokens bill as output and the Sonnet
+generation lines could run a small multiple of the estimate below — the
+pinned config is what makes 350 a planning value rather than a guess. If the
+§11 item 5 gate forces thinking back on for generation, this table must be
+re-planned before proceeding.
 
 | Line | Calls | Est. cost |
 |---|---|---|
@@ -370,10 +479,13 @@ b. **Simulation gate miss** (§6.4): analytic and simulated MDE disagree by
    more than 0.01 — planning model wrong; re-plan, don't launch.
 c. **Side-balance assertion (F11 gate, §5).** Every item entering the primary
    reduction has exactly one primary-labeled call per order, verified on the
-   realized records before the engine runs. A violation that cannot be
-   repaired by the request-time labels is a pipeline failure: replicate calls
-   leaking into the primary reduction would make clear-gap `d_i`
-   mean-zero-asymmetric and void the sign-flip test's exactness.
+   realized records joined against the persisted request plan
+   (`PlannedJudgeCall`, spec §12 gap 9). Promotions (planned primary failed,
+   replicate covers) pass with a count; plumbing errors (records the plan
+   cannot explain, or a side never planned) block. A violation that cannot
+   be repaired by the stored `call_role` labels is a pipeline failure:
+   replicate calls leaking into the primary reduction would make clear-gap
+   `d_i` mean-zero-asymmetric and void the sign-flip test's exactness.
 d. **Order-asymmetric exclusions.** D10 drops single-order pairs. If > 5% of
    pairs are excluded for any judge, or exclusions are asymmetric in which
    order failed (binomial test on failure order), selection correlates with
@@ -394,7 +506,11 @@ g. **Interval disagreement.** Large bootstrap-vs-analytic CI disagreement
 h. **Near-tie stratum content check.** Within the near-tie stratum the two
    arms are exchangeable, so the order-balanced *content* win rate for
    arm-1-as-generated must be consistent with ½. Deviation means arm labeling
-   leaked into presentation (pipeline bug), not a judge property.
+   leaked into presentation (pipeline bug), not a judge property. This check
+   presumes the arms are distinct strings: identical arms (a cache collision
+   or determinism failure, §3.3) pass it vacuously, which is why arm
+   distinctness has its own pre-judging gate (§11 item 5) rather than
+   relying on (h).
 
 A large β̂ passes falsification only if (a)–(h) are clean; the design cannot
 manufacture position bias out of content, length, or generator effects
@@ -482,13 +598,26 @@ study wants pairs no judge has seen.
 Blocking, in order:
 
 1. **Runner complete** (CLAUDE.md status: in progress), including the D10
-   both-orders-or-exclude rule and the §12.1 pairwise-record resolution in
-   `docs/data-model.md` — the §14.1 reduction is not implementable from
-   records until the pairwise schema choice is committed.
+   both-orders-or-exclude rule and the `call_role` field (spec §12 gap 9) in
+   `docs/data-model.md` — the §5 primary-reduction rule and its F11 gate are
+   not implementable from records until the label is stored on
+   `PairwiseJudgment`. (The §12.1 pairwise-record schema this item previously
+   flagged is resolved: `PairwiseJudgment` is committed.)
 2. **Validation green:** §11.4 counterbalancing identity and §11.9
    position-bias recovery/coverage cells, run against the shipping code.
 3. **Simulation gate** (§6.4) passes on the design's generative model.
 4. **Prompt bank curated and frozen** (§3.1), with licensing recorded.
+5. **Near-tie distinctness gate** (sequenced after generation is frozen,
+   before any judge call — hard gate, not a warning). Every near-tie pair's
+   two arms must be distinct strings. An identical pair is regenerated once
+   with a fresh `gen_seed`; a pair still identical after regeneration is
+   excluded and counted. If more than 5% of near-tie pairs end up excluded,
+   the stratum is degenerating — decoding is too deterministic under the
+   pinned generation config (§3.2) — and the response is to stop and revise
+   the generation config (e.g. re-enable thinking for generation and
+   re-budget per §6.5), never to weaken this gate or judge a stratum that
+   can no longer carry its design role. Rationale for a dedicated gate: §8
+   item (h) cannot detect identical arms (§3.3).
 
 Open items flagged for the run, not blocking design sign-off:
 

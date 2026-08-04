@@ -1,0 +1,7 @@
+cell,quantity,truth,mean_est,bias,recovery_tol,boot_coverage,boot_lower_bound,analytic_coverage,analytic_lower_bound
+self-preference-C20,sigma_self,0.0800,0.0794,-0.0006,0.0034,0.9339,0.8900,0.9502,0.9050
+self-preference-C20,naive_theta_excess,0.1300,0.1294,-0.0006,0.0030,,,,
+self-preference-C30,sigma_self,0.0800,0.0799,-0.0001,0.0031,0.9367,0.9000,0.9481,0.9100
+self-preference-C30,naive_theta_excess,0.1300,0.1304,+0.0004,0.0028,,,,
+self-preference-C50,sigma_self,0.0800,0.0801,+0.0001,0.0029,0.9439,0.9100,0.9498,0.9150
+self-preference-C50,naive_theta_excess,0.1300,0.1301,+0.0001,0.0027,,,,

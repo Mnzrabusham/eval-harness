@@ -4,6 +4,16 @@ sigma^2_J (pooled within-response) and sigma^2_B (method of moments, §8.2)
 across balanced and unbalanced replicate designs, plus the
 truncation-at-zero regime. Bias and RMSE are published; the asserts bind
 mean bias within Monte Carlo tolerance of zero.
+
+Two distinct kinds of unbalance are covered. The "unbalanced" regime applies
+the same call-count pattern to both variants — side-BALANCED unbalanced
+judging, the benign case that leaves the §2.2 symmetry argument intact. The
+"side-unbalanced" regime gives the two variants different call counts: the
+F11 condition that DECISION D4's item-level mirrored replicate draw (spec
+§8.2) is specified never to create, but which a run can still arrive with
+(partial failures, historical data). The variance-component estimators must
+recover truth there too — their unbiasedness does not depend on the balance
+D4 guarantees, only the sign-flip test's exactness does.
 """
 
 from collections import defaultdict
@@ -26,10 +36,12 @@ SIGMA2_J = 0.16
 SIGMA2_B = 0.25
 
 
-def _estimate_once(seed, *, n_items, r, m, m_pattern, sigma_b, w_exact):
+def _estimate_once(seed, *, n_items, r, m, m_pattern, sigma_b, w_exact,
+                   m_pattern_b=None):
     records, _ = simulate_score_records(
         n_items=n_items, delta=0.2, sigma_b=sigma_b, sigma_g=0.0,
-        sigma_j=float(np.sqrt(SIGMA2_J)), r=r, m=m, m_pattern=m_pattern, seed=seed)
+        sigma_j=float(np.sqrt(SIGMA2_J)), r=r, m=m, m_pattern=m_pattern,
+        m_pattern_b=m_pattern_b, seed=seed)
     by_response = defaultdict(list)
     for rec in records:
         by_response[rec["response_id"]].append(rec["judgment"])
@@ -61,6 +73,15 @@ def test_variance_components_recover_truth(reps):
         "unbalanced-r2-m1and3": dict(
             n_items=150, r=2, m=None, m_pattern=[1, 3], sigma_b=float(np.sqrt(SIGMA2_B)),
             w_exact=lambda s2j: 2.0 * s2j * (1.0 + 1.0 / 3.0) / 4.0),
+        # SIDE-unbalanced judging (F11): r=1, variant A gets m=2 calls,
+        # variant B gets m=1 — the condition D4's mirrored item-level draw
+        # must never create (spec §8.2), probed here so recovery is shown
+        # not to depend on it. Var_W(d) = s2j*(1/2 + 1/1); sigma2_J pools
+        # over variant A's responses only (the only ones with m >= 2).
+        "side-unbalanced-r1-mA2-mB1": dict(
+            n_items=150, r=1, m=None, m_pattern=[2], m_pattern_b=[1],
+            sigma_b=float(np.sqrt(SIGMA2_B)),
+            w_exact=lambda s2j: s2j * (1.0 / 2.0 + 1.0)),
     }
     rows, failures = [], []
     for ri, (name, cfg) in enumerate(regimes.items()):

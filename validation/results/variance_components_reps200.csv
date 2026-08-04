@@ -3,3 +3,5 @@ balanced-r1-m2:sigma2_J,0.16,0.16008,0.00008,0.00093,0.01313
 balanced-r1-m2:sigma2_B,0.25,0.25451,0.00451,0.00366,0.05183
 unbalanced-r2-m1and3:sigma2_J,0.16,0.15965,-0.00035,0.00067,0.00953
 unbalanced-r2-m1and3:sigma2_B,0.25,0.25160,0.00160,0.00286,0.04040
+side-unbalanced-r1-mA2-mB1:sigma2_J,0.16,0.16197,0.00197,0.00128,0.01818
+side-unbalanced-r1-mA2-mB1:sigma2_B,0.25,0.25001,0.00001,0.00446,0.06297

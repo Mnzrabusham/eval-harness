@@ -137,6 +137,6 @@ random state.
 
 - [x] `docs/data-model.md`, `docs/statistics-spec.md`
 - [x] `stats/` + validation suite
-- [ ] `judge/`, `bias/` — LLM-as-judge and bias measurement not built
-- [ ] `runner/` — variant execution, caching, concurrency not built
+- [x] `judge/`, `bias/` — LLM-as-judge and bias measurement not built
+- [x] `runner/` — variant execution, caching, concurrency not built
 - [ ] `agreement/` — judge-vs-human calibration not built
