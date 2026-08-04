@@ -1,0 +1,6 @@
+call_type,model,n,mean_input_tokens,p95_input_tokens,planning_value,delta_pct
+generation,claude-sonnet-5,300,123.9,480.1,120,+3.2
+generation,claude-haiku-4-5,300,97.0,367.9,120,-19.2
+judge,claude-opus-5,300,1128.9,1485.0,1100,+2.6
+judge,claude-sonnet-5,300,1128.9,1485.0,1100,+2.6
+judge,claude-haiku-4-5,300,763.0,1033.8,1100,-30.6

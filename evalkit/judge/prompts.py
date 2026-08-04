@@ -16,6 +16,7 @@ __all__ = [
     "PairwiseTask",
     "ResponseSide",
     "build_binary_prompt",
+    "build_generation_prompt",
     "build_pairwise_prompt",
     "build_scalar_prompt",
     "counterbalanced_pairwise_tasks",
@@ -51,6 +52,12 @@ class PairwiseTask:
     ties_allowed: bool
     prompt: str
 
+
+_GENERATION_TEMPLATE = """\
+Answer the following question in roughly 150 to 350 words.
+
+{prompt}
+"""
 
 _PAIRWISE_TEMPLATE = """\
 You are judging two responses to the same task. Judge only what is
@@ -115,6 +122,16 @@ Does the response meet the pass criteria?
 Reply with exactly one line:
 VERDICT: PASS | VERDICT: FAIL
 """
+
+
+def build_generation_prompt(prompt_text: str) -> str:
+    """The fixed generation instruction (docs/position-bias-study.md §3.2).
+
+    One instruction, identical for every arm and every stratum -- the
+    150-350 word range is what §6.5's max_tokens and output-token planning
+    are sized against, so it is not just prose the model happens to see.
+    """
+    return _GENERATION_TEMPLATE.format(prompt=prompt_text)
 
 
 def build_pairwise_prompt(task_text: str, first_text: str, second_text: str,

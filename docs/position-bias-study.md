@@ -58,10 +58,12 @@ Three Anthropic models spanning capability tiers, per constraint:
 
 Configuration, held fixed per judge for the whole run:
 
-- **Verdict via structured outputs** (`output_config.format`, JSON schema with
-  `verdict ∈ {"first", "second", "tie"}`). This makes parse failures near-zero
-  by construction and removes free-text-parsing asymmetries that could
-  correlate with position.
+- **Verdict via a free-text VERDICT line**, parsed by
+  `evalkit.judge.parse_pairwise_verdict` (`evalkit/judge/parse.py`'s
+  `_PAIRWISE_RE`, matching `VERDICT: FIRST|SECOND|TIE`) — the protocol
+  `evalkit.judge` and `evalkit.runner` actually implement. See the DESIGN
+  DECISION below for why this replaces the structured-outputs plan this
+  section originally specified.
 - **Thinking disabled** where the API permits it (Opus 5 at effort ≤ high,
   Sonnet 5; Haiku 4.5 has no thinking by default). **DESIGN DECISION:**
   thinking-on judges are plausibly less position-biased and are a natural
@@ -76,6 +78,48 @@ Configuration, held fixed per judge for the whole run:
   "which response better answers the prompt" instruction, responses in two
   fixed slots. β_pos is relative to this template; slot labels are part of
   what "position" means here.
+
+**DESIGN DECISION — free-text verdict parsing, not structured outputs.** The
+original wording of this section specified verdict collection via structured
+outputs (`output_config.format`, a JSON schema constraining
+`verdict ∈ {"first", "second", "tie"}`), reasoning that schema-constrained
+decoding makes parse failures near-zero by construction and removes
+free-text-parsing asymmetries that could correlate with position. Neither
+`evalkit.judge` nor `evalkit.runner` implements structured outputs anywhere:
+`ModelClient.complete()` (`evalkit/runner/client.py`) carries no schema or
+`output_config` parameter, `build_pairwise_prompt` emits a free-text "Reply
+with exactly one line: VERDICT: ..." instruction, and
+`parse_pairwise_verdict` extracts the verdict with a regex. Adding structured
+outputs means changing `client.py`, `prompts.py`, and `parse.py` together
+with their tests — in the component that spends the study's money,
+immediately before a paid run on a codebase that was just audited end to
+end. This section is amended to match the code as built rather than carrying
+a requirement the implementation does not meet.
+
+This is not treated as a downgrade without cost. What "near-zero by
+construction" bought was an assumption, not a measurement, and this
+project's convention throughout is to measure rather than assume (spec
+preamble; spec §11). The counter-consideration also cuts less cleanly than
+it looks: schema-constrained decoding restricts what the model is free to
+generate, and that constraint could itself interact with which response is
+shown first — free-text plus measurement is not obviously the weaker design,
+just a different set of assumptions, made auditable instead of assumed away.
+Replacing the removed guarantee with a measurement requirement:
+
+- Report the parse failure rate overall and split by presentation order
+  (first-shown vs second-shown), per judge.
+- Report the difference between the two orders with a CI, using the same
+  engine β̂_pos itself uses (statistics-spec.md §2), run on the per-pair
+  difference of order-level failure indicators — paired at the pair level.
+- §8 gains a falsification check (item i) treating an order-asymmetric
+  failure rate as a pipeline failure: a parse failure that survives retries
+  and replicate promotion (§5) is exactly what feeds a pair into the D10
+  exclusion path, and order-correlated exclusions bias the estimand through
+  selection rather than through any judge behavior under study.
+
+Structured outputs remain a real improvement worth making for a future run.
+This amendment is a decision to launch this run on measured free-text
+parsing, not a decision to rule structured outputs out permanently.
 
 **Model pinning caveat (spec §12 gap 6):** the spec requires immutable judge
 snapshots. Haiku 4.5 has a dated snapshot ID; `claude-opus-5` and
@@ -92,39 +136,82 @@ one.
 
 ### 3.1 Prompts
 
-300 single-turn prompts, six categories × 50: explanation, summarization
-(source text embedded in the prompt), reasoning/word problems, coding,
-creative writing, practical advice. Prompts are curated from permissively
-licensed public sets plus author-written items, deduplicated, each prompt an
-independent topic (no shared source documents across prompts).
+**Pre-registration amendment (2026-08-04, before any data collection).** This
+replaces the original §3.1, which specified 300 prompts curated by the
+author across six categories (explanation, summarization, reasoning/word
+problems, coding, creative writing, practical advice). The prompt set is now
+a seeded sample from a fixed public benchmark, built by
+`study/build_prompt_set.py`, for two reasons. First, a seeded sample from a
+fixed, versioned public set is mechanically reproducible — anyone can re-run
+the script against the same revision and get the same 300 prompts — which
+forecloses a question author curation cannot: whether prompts were selected,
+consciously or not, to produce the effect under study. Second,
+Arena-Hard-Auto's prompts were themselves selected, by that benchmark's own
+methodology, for separability between model responses of differing quality —
+exactly the property the clear-gap stratum (§3.2) needs and that
+author-curated prompts could not be shown to have.
 
-Inclusion filters, applied before generation:
+**Realized provenance:**
 
-- Open-ended enough that response quality can genuinely vary; no single
-  short verifiable answer (those make every comparison a tie or a fact check).
-- No prompts that elicit model self-identification ("who are you", "which
-  model wrote this") and no Anthropic- or model-specific content — required
-  for cross-family reuse (§10).
-- Target response length reachable in 150–350 words, stated in the prompt, so
-  length is roughly controlled by instruction rather than post-editing.
-- License-clean for publication.
+- **Source:** `lmarena-ai/arena-hard-auto-v0.1`, revision
+  `2a69efe86cff85c593cfd4c2b4491c128e52c6f1`.
+- **Seed:** `20260804`.
+- **Filters, with drop counts:** self-identification regex (prompts eliciting
+  "what model are you" / "who made you" / etc., which would leak arm identity
+  to the judge — 1 dropped), under 40 characters (13 dropped), over 2500
+  characters (16 dropped). Pool: 500 → 470 after filters.
+- **Sample:** 300 of 470, drawn with `random.Random(SEED).sample` after
+  sorting the filtered pool by `prompt_id`, so the seed alone fixes the draw
+  (no dependence on dataset iteration order).
+- **Output digest:** sha256 of `study/prompt_set.jsonl` =
+  `c040270b3d2cd92cfb6a322a4d37a78ff4dbc8a03a05305d154de0609cb3783e`.
+- **Prompt length (characters):** min 40, mean 285, median 126, max 2207.
+
+**Disclosures:**
+
+- **Domain skew.** Arena-Hard-Auto's pool skews technical; software
+  engineering and math are heavily represented in the sampled 300. β_pos as
+  measured here is relative to this domain mixture, not a claim about
+  position bias at, say, creative writing's or practical advice's
+  general-population prevalence.
+- **Provenance of the prompts themselves.** The prompts are human-authored
+  user queries, but their selection into the Arena-Hard-Auto benchmark used
+  an LLM-driven pipeline (the benchmark's own curation, upstream of this
+  study). The text is naturally occurring, but which prompts made it into the
+  pool this study samples from is a pipeline-mediated selection, not a
+  uniform one over all human-authored queries.
 
 ### 3.2 Response pairs — two strata, both orders each
 
 Each prompt contributes **two pairs**, one per stratum, 600 pairs total:
 
 - **Clear-gap stratum (300 pairs):** one response from `claude-sonnet-5`
-  (strong arm) and one from `claude-haiku-4-5` (weak arm), same prompt, same
-  generic generation instruction. Quality variation is real model-capability
-  variation, not artificial degradation (injected errors or handicapped
-  prompts would make the "worse" response detectably unnatural and would
-  poison later reuse).
+  (strong arm) and one from `claude-haiku-4-5` (weak arm), same prompt,
+  same generation prompt (`evalkit.judge.build_generation_prompt`, below).
+  Quality variation is real model-capability variation, not artificial
+  degradation (injected errors or handicapped prompts would make the
+  "worse" response detectably unnatural and would poison later reuse).
 - **Near-tie stratum (300 pairs):** two independent samples from
   `claude-sonnet-5` under the pinned generation config below, differing only
   in their `gen_seed` values (a cache discriminator, not a decoding control —
   §3.3). The two arms are exchangeable by construction, so expected content
   preference is exactly ½ — this stratum is where position bias has the most
   room to act and doubles as a negative control for content effects.
+
+**Generation prompt.** One fixed instruction, identical for every arm and
+every stratum: `evalkit.judge.build_generation_prompt(prompt_text)`
+(`evalkit/judge/prompts.py`) renders
+
+```
+Answer the following question in roughly 150 to 350 words.
+
+{prompt}
+```
+
+The 150–350 word range is not just prose the model happens to see — it is
+what §6.5's `max_tokens` ceiling and output-token planning line are sized
+against, so a change to this instruction's wording or word range
+invalidates that budget line and must be re-planned.
 
 **Generation config (pinned, all arms, recorded in the frozen artifacts):**
 
@@ -134,7 +221,7 @@ Each prompt contributes **two pairs**, one per stratum, 600 pairs total:
   decoding" would make the §6.5 generation line unbounded and would leave
   the frozen artifacts' config implicit. No sampling parameters (Sonnet 5
   rejects non-default values); a `max_tokens` ceiling sized for the 150–350
-  word instruction.
+  word instruction above.
 - `claude-haiku-4-5` arm (clear-gap weak arm): no thinking (its default —
   recorded explicitly rather than assumed), default sampling.
 
@@ -409,8 +496,8 @@ gate checks machinery, not the planning assumption.
 ### 6.5 Budget
 
 Token planning values: judge call ≈ 1,100 input (instructions + prompt + two
-150–350-word responses) + ≤ 64 output (structured verdict); generation ≈ 120
-input + 350 output **with thinking disabled (§3.2)**. Under Sonnet 5's
+150–350-word responses) + ≤ 64 output (free-text VERDICT line, §2); generation
+≈ 120 input + 350 output **with thinking disabled (§3.2)**. Under Sonnet 5's
 default adaptive thinking, thinking tokens bill as output and the Sonnet
 generation lines could run a small multiple of the estimate below — the
 pinned config is what makes 350 a planning value rather than a guess. If the
@@ -432,6 +519,22 @@ Batches API (50% discount; judging is not latency-sensitive and co-batching
 per judge is what §7.1-style drift hygiene wants anyway) and Sonnet 5 intro
 pricing if the run lands before 2026-08-31. The levers are headroom, not
 load-bearing: the design fits list price.
+
+**Verified against the frozen item set (2026-08-04).** `study/count_tokens.py`
+rendered every prompt in `study/prompt_set.jsonl` through the real templates
+(`evalkit.judge.build_generation_prompt`, `evalkit.judge.build_pairwise_prompt`)
+and counted input tokens via the token-counting endpoint. Generation, call-weighted
+across the two generation models per the table above (900 Sonnet 5 : 300 Haiku 4.5):
+mean **117.1** against the 120 planning value — holds. Judging: mean **1,128.9**
+input tokens for Opus 5 and Sonnet 5 (same tokenizer, ~3% over the single 1,100
+planning value applied uniformly to all three judges above), and **763.0** for
+Haiku 4.5 (older tokenizer, ~31% under the same planning value) — the shared
+1,100 line was never a per-judge number and the realized per-judge spread shows
+why. Caveat: the judge figures use 250-word placeholder responses, since real
+responses don't exist yet (§11 item 4 is still open); the measured p95 across
+prompts was **1,485** input tokens, so if real responses cluster near the
+350-word ceiling of §3.2's instruction rather than its midpoint, the judge line
+should be expected to rise toward that p95, not stay at the mean measured here.
 
 ---
 
@@ -511,8 +614,24 @@ h. **Near-tie stratum content check.** Within the near-tie stratum the two
    or determinism failure, §3.3) pass it vacuously, which is why arm
    distinctness has its own pre-judging gate (§11 item 5) rather than
    relying on (h).
+i. **Order-asymmetric parse failure rate.** Verdict parsing is free-text
+   (§2's DESIGN DECISION — free-text verdict parsing, not structured
+   outputs) and can fail to find or disambiguate a VERDICT line. Report the
+   parse failure rate overall and split by presentation order (first-shown
+   vs second-shown), per judge, and the difference between the two orders
+   with a CI — the same engine used for β̂_pos, run on the per-pair
+   difference of order-level failure indicators (paired at the pair level).
+   A failure that survives retries and replicate promotion (§5) is exactly
+   what feeds a pair into check (d)'s D10 exclusion path, so this check is
+   upstream of (d) and uses the same significance-only bar (d) already
+   applies to exclusion-order asymmetry, moved earlier so it catches the
+   signal before it has fully become exclusions: a CI for the order
+   difference that excludes zero is a pipeline failure. It blocks for the
+   same reason (d) does — order-correlated failures make D10's exclusions
+   order-correlated, biasing β̂ through selection rather than through any
+   judge behavior the study wants to measure.
 
-A large β̂ passes falsification only if (a)–(h) are clean; the design cannot
+A large β̂ passes falsification only if (a)–(i) are clean; the design cannot
 manufacture position bias out of content, length, or generator effects
 because all of those cancel in the order-balanced recode by construction —
 the residual ways to fake it are exactly the pipeline failures listed above.
@@ -564,14 +683,18 @@ makes its artifacts unusable for a cross-family generation pass.
 **Carries over:**
 
 - **Prompt bank + strata metadata.** Model-agnostic, no self-identification
-  elicitors, no Anthropic-specific content, license-clean, category-balanced
-  — a cross-family pass can generate new arms on the identical prompts.
+  elicitors, no Anthropic-specific content — a cross-family pass can generate
+  new arms on the identical prompts. Not category-balanced: the bank is a
+  seeded sample from a fixed public benchmark and skews technical (§3.1),
+  which a reuse should carry forward as the same disclosure, not something
+  this design fixes.
 - **Frozen Anthropic response sets** with full generation config — usable as
   the comparison arm ("self" vs other-family, or as panel-shared material);
   the near-tie Sonnet samples are natural-quality responses, deliberately not
   artificially degraded.
 - **Infrastructure:** both-orders-or-exclude enforcement (D10), co-batched
-  judging, structured-verdict schema, caching, the judge prompt template.
+  judging, the free-text verdict parser (§2), caching, the judge prompt
+  template.
 - **Analysis:** §14.1 reduction and engine are shared; §14.4's estimator
   consumes the same order-balanced pair scores.
 - **This study's estimates:** per-judge β̂_pos and σ̂²_J. Position effects

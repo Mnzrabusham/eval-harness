@@ -86,7 +86,7 @@ def test_record_stays_in_presentation_terms():
     _, t2 = _tasks()  # B shown first
     rec = pairwise_judgment_from_task(
         t2, "VERDICT: FIRST", run_id="run-1", judge_model="judge-2026-01-15",
-        judge_config_id="jc-1", judge_call_id="call-1",
+        judge_config_id="jc-1", judge_call_id="call-1", call_role="primary",
         created_at="2026-08-02T00:00:00Z")
     assert rec.judgment == "first"  # presentation term, even though B won
     assert rec.variant_first == "variant-beta"
@@ -100,7 +100,8 @@ def test_floating_judge_model_alias_rejected():
     with pytest.raises(ValueError, match="latest"):
         pairwise_judgment_from_task(
             t1, "VERDICT: FIRST", run_id="r", judge_model="judge-latest",
-            judge_config_id="jc", judge_call_id="c", created_at="2026-08-02")
+            judge_config_id="jc", judge_call_id="c", call_role="primary",
+            created_at="2026-08-02")
     with pytest.raises(ValueError, match="latest"):
         ResponseJudgment(run_id="r", item_id="i", source_doc_id=None,
                          variant_id="v", response_id="resp", gen_seed=0,
@@ -117,7 +118,19 @@ def test_pairwise_judgment_verdict_constraint():
                          gen_seed_first=0, gen_seed_second=0,
                          tokens_first=1, tokens_second=2,
                          judge_model="judge-2026-01-15", judge_config_id="jc",
-                         judge_call_id="c", judgment="variant-a",
+                         judge_call_id="c", call_role="primary", judgment="variant-a",
+                         created_at="2026-08-02")
+
+
+def test_pairwise_judgment_call_role_constraint():
+    with pytest.raises(ValueError, match="call_role"):
+        PairwiseJudgment(run_id="r", item_id="i", source_doc_id=None,
+                         pair_id="p", variant_first="a", variant_second="b",
+                         response_id_first="r1", response_id_second="r2",
+                         gen_seed_first=0, gen_seed_second=0,
+                         tokens_first=1, tokens_second=2,
+                         judge_model="judge-2026-01-15", judge_config_id="jc",
+                         judge_call_id="c", call_role="secondary", judgment="first",
                          created_at="2026-08-02")
 
 

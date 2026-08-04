@@ -8,6 +8,10 @@ model's write-time constraints enforced at construction:
 - ``PairwiseJudgment.judgment`` is recorded in presentation terms
   (first/second/tie), never variant terms; which variant won is derived at
   analysis time (evalkit.stats.reduction).
+- ``call_role`` (``primary`` | ``replicate``) is assigned at request-creation
+  time and echoed unchanged onto the realized record; ``PlannedJudgeCall``
+  is the persisted plan a gate joins realized records back to (spec §12
+  gap 9, DECISION D11).
 - RunConfig is immutable per run_id (frozen dataclass; persistence-level
   immutability is the store's job).
 """
@@ -16,10 +20,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-__all__ = ["PairwiseJudgment", "ResponseJudgment", "RunConfig"]
+__all__ = ["PairwiseJudgment", "PlannedJudgeCall", "ResponseJudgment", "RunConfig"]
 
 _JUDGMENT_TYPES = ("pairwise", "scalar", "binary")
 _PAIRWISE_VERDICTS = ("first", "second", "tie")
+_CALL_ROLES = ("primary", "replicate")
 
 
 def _check_judge_model(judge_model: str) -> None:
@@ -28,6 +33,11 @@ def _check_judge_model(judge_model: str) -> None:
             f"judge_model must be an immutable snapshot id; floating alias "
             f"{judge_model!r} rejected at write time (docs/data-model.md)"
         )
+
+
+def _check_call_role(call_role: str) -> None:
+    if call_role not in _CALL_ROLES:
+        raise ValueError(f"call_role must be one of {_CALL_ROLES}, got {call_role!r}")
 
 
 @dataclass(frozen=True)
@@ -50,6 +60,35 @@ class RunConfig:
                 raise ValueError("scalar runs require scale_min and scale_max")
             if not self.scale_min < self.scale_max:
                 raise ValueError("scale_min must be < scale_max")
+
+
+@dataclass(frozen=True)
+class PlannedJudgeCall:
+    """The full planned pairwise request set (docs/data-model.md).
+
+    One row per intended judge call, written at request-creation time
+    before any call is made, immutable once written. ``judge_call_id`` is
+    pre-assigned; the realized ``PairwiseJudgment`` echoes it exactly, so
+    the gate can join realized records back to this plan on that id alone
+    (spec §12 gap 9, DECISION D11) instead of re-deriving intent from the
+    run seed.
+    """
+
+    run_id: str
+    item_id: str
+    source_doc_id: str | None
+    pair_id: str
+    variant_first: str
+    variant_second: str
+    judge_model: str
+    judge_config_id: str
+    call_role: str
+    judge_call_id: str
+    created_at: str
+
+    def __post_init__(self) -> None:
+        _check_judge_model(self.judge_model)
+        _check_call_role(self.call_role)
 
 
 @dataclass(frozen=True)
@@ -96,12 +135,14 @@ class PairwiseJudgment:
     judge_model: str
     judge_config_id: str
     judge_call_id: str
+    call_role: str
     judgment: str
     created_at: str
     annotator_id: str | None = None
 
     def __post_init__(self) -> None:
         _check_judge_model(self.judge_model)
+        _check_call_role(self.call_role)
         if self.judgment not in _PAIRWISE_VERDICTS:
             raise ValueError(
                 f"pairwise judgment must be one of {_PAIRWISE_VERDICTS} "

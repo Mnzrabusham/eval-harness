@@ -15,7 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from evalkit.judge import ResponseSide, VerdictParseError, counterbalanced_pairwise_tasks
+from evalkit.judge import (
+    PairwiseJudgment,
+    PlannedJudgeCall,
+    ResponseSide,
+    VerdictParseError,
+    counterbalanced_pairwise_tasks,
+)
 from evalkit.runner import (
     Completion,
     GenerationTask,
@@ -24,17 +30,22 @@ from evalkit.runner import (
     ResponseCache,
     ResponseJudgeCall,
     RetryPolicy,
+    build_pairwise_request_plan,
     call_with_retry,
+    draw_replicate_item_subset,
     dry_run,
+    gate_pairwise_realized,
     generation_response_id,
     get_or_generate,
     incomplete_pairs,
     pairwise_call_id,
+    replicate_subset_size,
     run_concurrent,
     run_generation,
     run_pairwise_judging,
     run_response_judging,
     validate_judge_model,
+    write_planned_calls,
 )
 from evalkit.runner.store import JsonlStore
 
@@ -359,15 +370,16 @@ def test_retry_exhaustion_preserves_store_and_stays_resumable(tmp_path):
 # --- pairwise judging: counterbalancing + resumability + write-time guard --
 
 
-def _pairwise_calls(*, judge_model="judge-2026-01-01", replicate=0):
+def _pairwise_calls(*, judge_model="judge-2026-01-01", replicate=0, call_role="primary"):
     side_a = ResponseSide(variant_id="variant-alpha", response_id="resp-a1",
                           text="the alpha answer", tokens=12)
     side_b = ResponseSide(variant_id="variant-beta", response_id="resp-b1",
                           text="the beta answer", tokens=20)
     t1, t2 = counterbalanced_pairwise_tasks(item_id="item-1", task_text="What is X?",
                                            side_a=side_a, side_b=side_b)
-    common = dict(replicate=replicate, judge_model=judge_model, judge_config_id="cfg-1",
-                  judge_seed=1, judge_sampling_params={"temperature": 0.0}, created_at="2026-01-01")
+    common = dict(replicate=replicate, call_role=call_role, judge_model=judge_model,
+                  judge_config_id="cfg-1", judge_seed=1,
+                  judge_sampling_params={"temperature": 0.0}, created_at="2026-01-01")
     return [
         PairwiseJudgeCall(task=t1, **common),
         PairwiseJudgeCall(task=t2, **common),
@@ -435,8 +447,8 @@ def test_response_judging_full_set_contract_on_resume(tmp_path):
 
 
 def test_pairwise_replicates_are_separate_rows(tmp_path):
-    rep0 = _pairwise_calls(replicate=0)
-    rep1 = _pairwise_calls(replicate=1)
+    rep0 = _pairwise_calls(replicate=0, call_role="primary")
+    rep1 = _pairwise_calls(replicate=1, call_role="replicate")
     ids_0 = {pairwise_call_id(c) for c in rep0}
     ids_1 = {pairwise_call_id(c) for c in rep1}
     assert ids_0.isdisjoint(ids_1)
@@ -495,7 +507,7 @@ def test_incomplete_pairs_flags_one_sided_pairs_only(tmp_path):
     t_only_one_order, _t_never_run = counterbalanced_pairwise_tasks(
         item_id="item-2", task_text="What is Y?", side_a=side_c, side_b=side_d)
     incomplete_call = PairwiseJudgeCall(
-        task=t_only_one_order, replicate=0, judge_model="judge-2026-01-01",
+        task=t_only_one_order, replicate=0, call_role="primary", judge_model="judge-2026-01-01",
         judge_config_id="cfg-1", judge_seed=1, judge_sampling_params={}, created_at="2026-01-01",
     )
     incomplete_pair_id = t_only_one_order.pair_id
@@ -677,3 +689,214 @@ def test_ids_are_stable_across_different_hash_seeds():
     out_seed_2 = _run("2")
     assert out_seed_1 == out_seed_2
     assert out_seed_1.strip() != ""
+
+
+# --- D4 item-level replicate draw (docs/data-model.md; spec §8.2, DECISION D4) --
+
+
+def _item_task_pairs(n: int) -> dict:
+    pairs = {}
+    for i in range(n):
+        side_a = ResponseSide(variant_id="variant-alpha", response_id=f"resp-a{i}",
+                              text=f"alpha answer {i}", tokens=10)
+        side_b = ResponseSide(variant_id="variant-beta", response_id=f"resp-b{i}",
+                              text=f"beta answer {i}", tokens=10)
+        pairs[f"item-{i}"] = counterbalanced_pairwise_tasks(
+            item_id=f"item-{i}", task_text=f"task {i}", side_a=side_a, side_b=side_b)
+    return pairs
+
+
+def test_d4_replicate_draw_is_item_level_and_side_balanced():
+    item_tasks = _item_task_pairs(20)
+    plan = build_pairwise_request_plan(
+        item_tasks, run_id="run-1", judge_model="judge-2026-01-01", judge_config_id="cfg-1",
+        judge_seed=1, judge_sampling_params={}, created_at="2026-01-01", replicate_seed=42,
+    )
+    # A genuine, non-trivial subset was drawn -- not all-or-nothing.
+    assert 0 < len(plan.replicated_items) < 20
+
+    for item_id, (t1, t2) in item_tasks.items():
+        reps_first = {c.replicate for c in plan.calls if c.task == t1}
+        reps_second = {c.replicate for c in plan.calls if c.task == t2}
+        # Side-balanced by construction: whichever replicate indices exist
+        # on one presentation order exist on the other. A per-response
+        # reimplementation (drawing each side independently) would break
+        # this for some item with near certainty -- see the next test for
+        # confirmation that independent per-side draws actually do diverge.
+        assert reps_first == reps_second, f"{item_id} is side-unbalanced"
+        if item_id in plan.replicated_items:
+            assert reps_first == {0, 1}
+        else:
+            assert reps_first == {0}
+
+
+def test_independent_per_side_draws_diverge_so_the_balance_check_has_teeth():
+    # Guards the guard: a per-response reimplementation is, in effect, an
+    # independent draw per side. Two independently-seeded draws over the
+    # same items disagreeing shows the assertion above would actually catch
+    # that mistake instead of passing vacuously.
+    item_ids = [f"item-{i}" for i in range(20)]
+    drawn_side_a = draw_replicate_item_subset(item_ids, seed=1)
+    drawn_side_b = draw_replicate_item_subset(item_ids, seed=2)
+    assert drawn_side_a != drawn_side_b
+
+
+def test_d4_draw_is_deterministic_given_the_same_seed():
+    item_ids = [f"item-{i}" for i in range(15)]
+    assert draw_replicate_item_subset(item_ids, seed=7) == draw_replicate_item_subset(item_ids, seed=7)
+
+
+def test_replicate_subset_size_respects_bounds():
+    # Never fewer than 10 responses' worth of items...
+    assert replicate_subset_size(1000, min_responses=10, max_responses=30, fraction=0.0,
+                                 responses_per_item=2) == 5  # ceil(10 / 2)
+    # ...capped at max_responses even for a huge item bank...
+    assert replicate_subset_size(1000, min_responses=10, max_responses=30, fraction=1.0,
+                                 responses_per_item=2) == 15  # ceil(30 / 2)
+    # ...and never more items than exist.
+    assert replicate_subset_size(3, min_responses=10, max_responses=30, fraction=1.0,
+                                 responses_per_item=2) == 3
+
+
+# --- gap-9 gate (docs/data-model.md; spec §12 gap 9, DECISION D11) ------------
+
+
+def _planned(pair_id, variant_first, variant_second, call_role, judge_call_id):
+    return PlannedJudgeCall(
+        run_id="run-1", item_id="item-1", source_doc_id=None, pair_id=pair_id,
+        variant_first=variant_first, variant_second=variant_second,
+        judge_model="judge-2026-01-01", judge_config_id="cfg-1", call_role=call_role,
+        judge_call_id=judge_call_id, created_at="2026-01-01",
+    )
+
+
+def _realized(pair_id, variant_first, variant_second, call_role, judge_call_id, judgment="first"):
+    return PairwiseJudgment(
+        run_id="run-1", item_id="item-1", source_doc_id=None, pair_id=pair_id,
+        variant_first=variant_first, variant_second=variant_second,
+        response_id_first="r1", response_id_second="r2", gen_seed_first=0, gen_seed_second=0,
+        tokens_first=1, tokens_second=1, judge_model="judge-2026-01-01", judge_config_id="cfg-1",
+        judge_call_id=judge_call_id, call_role=call_role, judgment=judgment, created_at="2026-01-01",
+    )
+
+
+def test_gate_classifies_the_four_gap_9_cases():
+    planned = [
+        # pair-normal: primary planned and realized.
+        _planned("pair-normal", "v1", "v2", "primary", "call-normal-primary"),
+        # pair-promoted: primary planned but never realized; its replicate was.
+        _planned("pair-promoted", "v1", "v2", "primary", "call-promoted-primary"),
+        _planned("pair-promoted", "v1", "v2", "replicate", "call-promoted-replicate"),
+        # pair-excluded: primary and replicate planned, neither realized.
+        _planned("pair-excluded", "v1", "v2", "primary", "call-excluded-primary"),
+        _planned("pair-excluded", "v1", "v2", "replicate", "call-excluded-replicate"),
+        # pair-no-primary-planned: a plan-authoring bug -- only a replicate
+        # was ever planned. It succeeded, but that's still a plumbing error:
+        # the primary was never requested for this (pair, order).
+        _planned("pair-no-primary-planned", "v1", "v2", "replicate", "call-np-replicate"),
+    ]
+    realized = [
+        _realized("pair-normal", "v1", "v2", "primary", "call-normal-primary"),
+        _realized("pair-promoted", "v1", "v2", "replicate", "call-promoted-replicate"),
+        _realized("pair-no-primary-planned", "v1", "v2", "replicate", "call-np-replicate"),
+        # A stray record: a judge_call_id with no plan row anywhere.
+        _realized("orphan-pair", "v1", "v2", "primary", "unplanned-call-id"),
+    ]
+
+    gate = gate_pairwise_realized(planned, realized)
+
+    assert gate.normal == (("pair-normal", "v1"),)
+    assert gate.promotions == (("pair-promoted", "v1"),)
+    assert gate.exclusions == (("pair-excluded", "v1"),)
+    assert set(gate.plumbing_errors) == {("pair-no-primary-planned", "v1"), ("orphan-pair", "v1")}
+    assert gate.promotion_count == 1
+    assert gate.plumbing_error_count == 2
+    assert gate.exclusion_count == 1
+    assert gate.blocks_run is True
+
+
+def test_gate_does_not_block_on_promotions_and_exclusions_alone():
+    planned = [
+        _planned("pair-promoted", "v1", "v2", "primary", "call-promoted-primary"),
+        _planned("pair-promoted", "v1", "v2", "replicate", "call-promoted-replicate"),
+        _planned("pair-excluded", "v1", "v2", "primary", "call-excluded-primary"),
+    ]
+    realized = [
+        _realized("pair-promoted", "v1", "v2", "replicate", "call-promoted-replicate"),
+    ]
+    gate = gate_pairwise_realized(planned, realized)
+    assert gate.blocks_run is False
+    assert gate.promotion_count == 1
+    assert gate.exclusion_count == 1
+    assert gate.plumbing_error_count == 0
+
+
+def test_promotion_is_never_written_back_only_derived():
+    # docs/data-model.md Constraints: promotions are derived at analysis
+    # time by joining records to PlannedJudgeCall, never written back. The
+    # realized record itself must still say call_role="replicate" even
+    # though the gate reports this (pair, order) as a promotion.
+    planned = [
+        _planned("pair-promoted", "v1", "v2", "primary", "call-promoted-primary"),
+        _planned("pair-promoted", "v1", "v2", "replicate", "call-promoted-replicate"),
+    ]
+    realized = [_realized("pair-promoted", "v1", "v2", "replicate", "call-promoted-replicate")]
+    assert realized[0].call_role == "replicate"
+    gate = gate_pairwise_realized(planned, realized)
+    assert gate.promotions == (("pair-promoted", "v1"),)
+
+
+# --- plan -> execute -> gate, end to end --------------------------------------
+
+
+def test_plan_is_on_disk_before_any_call_and_a_clean_run_gates_all_normal(tmp_path):
+    item_tasks = _item_task_pairs(3)
+    plan = build_pairwise_request_plan(
+        item_tasks, run_id="run-1", judge_model="judge-2026-01-01", judge_config_id="cfg-1",
+        judge_seed=1, judge_sampling_params={"temperature": 0.0}, created_at="2026-01-01",
+        replicate_seed=1,
+    )
+    plan_store = JsonlStore(tmp_path / "planned.jsonl")
+    write_planned_calls(plan.planned, plan_store)
+    # The plan is fully persisted before a single judge call has been made.
+    assert len(list(plan_store.read_raw())) == len(plan.planned)
+
+    client = MockClient()
+    cache = ResponseCache(tmp_path / "cache")
+    judgment_store = JsonlStore(tmp_path / "pairwise.jsonl")
+    run_pairwise_judging(plan.calls, run_id="run-1", client=client, cache=cache,
+                        store=judgment_store, retry_policy=_policy(), concurrency=4)
+
+    gate = gate_pairwise_realized(plan_store.read_raw(), judgment_store.read_raw())
+    # MockClient never fails, so every planned primary succeeded: no
+    # promotions, no plumbing errors, no exclusions, even though replicate
+    # calls were also planned, made, and recorded for the drawn items.
+    assert gate.plumbing_error_count == 0
+    assert gate.promotion_count == 0
+    assert gate.exclusion_count == 0
+    expected = {(t1.pair_id, t1.first.variant_id) for t1, _t2 in item_tasks.values()}
+    expected |= {(t2.pair_id, t2.first.variant_id) for _t1, t2 in item_tasks.values()}
+    assert set(gate.normal) == expected
+
+
+def test_gate_flags_a_record_the_plan_never_committed_to(tmp_path):
+    item_tasks = _item_task_pairs(2)
+    plan = build_pairwise_request_plan(
+        item_tasks, run_id="run-1", judge_model="judge-2026-01-01", judge_config_id="cfg-1",
+        judge_seed=1, judge_sampling_params={}, created_at="2026-01-01", replicate_seed=1,
+    )
+    client = MockClient()
+    cache = ResponseCache(tmp_path / "cache")
+    store = JsonlStore(tmp_path / "pairwise.jsonl")
+    run_pairwise_judging(plan.calls, run_id="run-1", client=client, cache=cache,
+                        store=store, retry_policy=_policy(), concurrency=2)
+
+    gate_clean = gate_pairwise_realized(plan.planned, store.read_raw())
+    assert gate_clean.blocks_run is False
+
+    # Simulate a plumbing bug: a realized record whose judge_call_id was
+    # never in the plan the run committed to before judging started.
+    stray = _realized("orphan-pair", "v1", "v2", "primary", "unplanned-call-id")
+    gate_dirty = gate_pairwise_realized(plan.planned, list(store.read_raw()) + [stray])
+    assert gate_dirty.blocks_run is True
+    assert gate_dirty.plumbing_error_count == 1

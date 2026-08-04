@@ -66,11 +66,14 @@ class PairwiseJudgeCall:
 
     ``replicate`` distinguishes independent judge calls on the same task
     (data-model.md: replicates are separate rows sharing everything but
-    judge_call_id).
+    judge_call_id). ``call_role`` is the request-creation-time label (spec
+    §12 gap 9, DECISION D11) carried onto the realized PairwiseJudgment
+    unchanged -- it is not derived here or anywhere downstream.
     """
 
     task: PairwiseTask
     replicate: int
+    call_role: str
     judge_model: str
     judge_config_id: str
     judge_seed: int
@@ -123,7 +126,7 @@ def _run_one_pairwise(call: PairwiseJudgeCall, *, client: ModelClient, cache: Re
     return pairwise_judgment_from_task(
         call.task, completion.text, run_id=run_id, judge_model=call.judge_model,
         judge_config_id=call.judge_config_id, judge_call_id=judge_call_id,
-        created_at=call.created_at, annotator_id=call.annotator_id,
+        call_role=call.call_role, created_at=call.created_at, annotator_id=call.annotator_id,
     )
 
 

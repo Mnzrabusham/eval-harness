@@ -82,11 +82,13 @@ across the codebase. Do not refactor code you were not asked to touch.
 - [x] docs/statistics-spec.md
 - [x] stats module + validation suite
 - [x] judge + bias modules
+- [x] manipulation check: specificity covered by verbosity-controlled-C{20,30,50}
 - [x] runner
-- [x] D4 replicate draw is item-level and mirrored across variants
-      (spec §8.2 as amended); ship with a test asserting the drawn
-      subset is side-balanced, so a per-response reimplementation fails
-      loudly instead of just firing F11 warnings downstream
-- [ ] agreement module
+- [x] D4 item-level draw + side-balance test
+- [x] study prompt set (Arena-Hard-Auto v0.1, seeded sample of 300)
+- [x] generation prompt template
+- [ ] simulation gate (§6.4)
+- [ ] dry run against the budget
 - [ ] position bias study
+- [ ] agreement module
 - [ ] README and writeup

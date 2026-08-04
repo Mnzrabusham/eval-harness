@@ -69,13 +69,17 @@ def parse_scalar_verdict(text: str, *, scale_min: float, scale_max: float) -> fl
 
 def pairwise_judgment_from_task(task: PairwiseTask, judge_output: str, *,
                                 run_id: str, judge_model: str, judge_config_id: str,
-                                judge_call_id: str, created_at: str,
+                                judge_call_id: str, call_role: str, created_at: str,
                                 annotator_id: str | None = None) -> PairwiseJudgment:
     """Parse the judge output for ``task`` into a PairwiseJudgment record.
 
     The record's judgment is the parsed presentation-term verdict; variant
     identity flows only into the structural variant_first/variant_second
     fields, so a verdict can never be emitted in variant terms.
+
+    ``call_role`` is not derived here -- it is assigned at request-creation
+    time (the plan) and simply echoed onto the realized record (spec §12
+    gap 9, DECISION D11).
     """
     verdict = parse_pairwise_verdict(judge_output, ties_allowed=task.ties_allowed)
     return PairwiseJudgment(
@@ -94,6 +98,7 @@ def pairwise_judgment_from_task(task: PairwiseTask, judge_output: str, *,
         judge_model=judge_model,
         judge_config_id=judge_config_id,
         judge_call_id=judge_call_id,
+        call_role=call_role,
         annotator_id=annotator_id,
         judgment=verdict,
         created_at=created_at,

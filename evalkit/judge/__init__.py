@@ -18,20 +18,23 @@ from .prompts import (
     PairwiseTask,
     ResponseSide,
     build_binary_prompt,
+    build_generation_prompt,
     build_pairwise_prompt,
     build_scalar_prompt,
     counterbalanced_pairwise_tasks,
 )
-from .records import PairwiseJudgment, ResponseJudgment, RunConfig
+from .records import PairwiseJudgment, PlannedJudgeCall, ResponseJudgment, RunConfig
 
 __all__ = [
     "PairwiseJudgment",
     "PairwiseTask",
+    "PlannedJudgeCall",
     "ResponseJudgment",
     "ResponseSide",
     "RunConfig",
     "VerdictParseError",
     "build_binary_prompt",
+    "build_generation_prompt",
     "build_pairwise_prompt",
     "build_scalar_prompt",
     "counterbalanced_pairwise_tasks",
