@@ -38,10 +38,20 @@ running the actual estimator/test on synthetic data with known ground truth
   (spec §9.3): 50 items, binary pass/fail, 30% discordance, α = 0.05, power
   0.80 → MDE ≈ 0.21. A real 5-point improvement has roughly a 9% chance of
   reaching significance at that sample size.
+- **Self-preference: naive vs. corrected.** A judge scoring its own model's
+  responses shows a naive win-rate excess of 0.130; the cross-judge-corrected
+  estimator isolates the self-preference component alone at 0.080 — the
+  naive number overstates self-preference by 63%, with the rest attributable
+  to a genuine quality difference the naive quantity doesn't control for.
+  [`bias_self_preference_reps10000.csv`](validation/results/bias_self_preference_reps10000.csv)
 
 ## What the library does
 
-Only `evalkit/stats/` is implemented (see Status).
+`evalkit/stats/`, `evalkit/judge/`, `evalkit/bias/`, and `evalkit/runner/`
+are implemented and validated; `evalkit/agreement/` is not yet built (see
+Status).
+
+### `stats/` — estimators, tests, intervals, power
 
 - `engine.py` — the shared inference engine (spec §2): cluster percentile
   bootstrap CI, cluster sign-flip permutation test, analytic cluster-robust
@@ -64,6 +74,68 @@ Only `evalkit/stats/` is implemented (see Status).
   analytic-vs-bootstrap CI choice (spec §2.1/§2.3, DECISION D9).
 - `simulate.py` — synthetic data generators shared by the validation suite
   and the power tool.
+
+### `judge/` — LLM-as-judge prompts and strict parsing
+
+- `prompts.py` — pairwise/scalar/binary judge prompts plus the generation
+  prompt; `counterbalanced_pairwise_tasks` makes counterbalancing structural
+  — both presentation orders are always built together under one `pair_id`,
+  never in isolation.
+- `parse.py` — verdict parsing that refuses to guess: a missing verdict,
+  conflicting verdicts, a disallowed tie, or an out-of-scale score raises
+  instead of being coerced to something plausible.
+- `records.py` — the `docs/data-model.md` record types (`RunConfig`,
+  `PlannedJudgeCall`, `ResponseJudgment`, `PairwiseJudgment`) with the
+  data model's write-time constraints enforced at construction (pinned
+  `judge_model`, presentation-terms verdicts, immutable `call_role`).
+
+### `bias/` — judge systematic-error measurement (spec §14)
+
+Every estimator reduces judgment records to an item-level vector and hands
+it to the same `stats/` engine unchanged — no separate resampling code.
+
+- `position.py` — `position_bias`, the additive marginal position effect
+  (§14.2).
+- `verbosity.py` — `verbosity_association` (observational, named as an
+  association per the F14 naming rule, never a bias) and
+  `verbosity_bias_controlled` (the controlled length-manipulation study,
+  §14.3).
+- `self_preference.py` — `self_preference_bias`, the cross-judge contrast
+  that separates genuine quality from self-preference (§14.4).
+
+### `runner/` — executing a run against real models
+
+- `client.py` — a `ModelClient` protocol; the runner is client-agnostic, so
+  tests plug in a mock and production code plugs in a real one, with no
+  network calls either way.
+- `cache.py` / `store.py` — a disk-backed response cache and an append-only
+  resumable record store, so an interrupted run resumes rather than
+  restarts.
+- `retry.py` / `concurrency.py` — retry with backoff on rate limits, and
+  bounded concurrency via a thread pool.
+- `generate.py` / `judging.py` — response generation and judge execution,
+  including `call_role` (primary/replicate) labeling at request-creation
+  time (spec §12 gap 9).
+- `pairwise_plan.py` — the DECISION D4 item-level replicate draw, the
+  `PlannedJudgeCall` request plan written before any call is made, and the
+  gate that joins realized records back to that plan.
+- `plan.py` — `dry_run`: predicted billable calls and cost before spending
+  anything.
+
+### Applied: a real study, not just a library
+
+`docs/position-bias-study.md` is a full pre-registered design — judges,
+item bank, replicate subset, sample-size/MDE planning, a simulation gate,
+a falsification checklist — for measuring whether Anthropic's judge models
+prefer the response shown first. `study/` carries it from design toward an
+executable run: a seeded, reproducible prompt sample from a public
+benchmark (`build_prompt_set.py`), a launch gate that runs synthetic
+judgments through the *real* reduction and engine to check for pipeline
+power loss before spending API budget (`simulation_gate.py`), and a
+six-phase driver (`run_study.py`: generate, check-arms, plan, dry-run,
+judge, gate) where every money-spending phase prints its predicted cost and
+requires an explicit `--confirm`. The study itself has not been run against
+the live API yet (see Status).
 
 ## Known limitations
 
@@ -117,6 +189,9 @@ false-positive rate, power agreement, or an exact identity (spec §11).
 7. Winner's curse — selection bias of the empirical best of k, measured.
 8. Null-robustness probes — sign-flip behavior outside the exchangeability
    null (recorded, not build-failing).
+9. Bias estimator recovery — position, verbosity (observational association
+   plus the controlled-manipulation check), and self-preference (naive vs.
+   cross-judge-corrected), at the same clustered grid as coverage.
 
 Results are published to `validation/results/*.csv` on every run; the
 numbers in this document are read from those files, not restated by hand
@@ -137,6 +212,13 @@ random state.
 
 - [x] `docs/data-model.md`, `docs/statistics-spec.md`
 - [x] `stats/` + validation suite
-- [x] `judge/`, `bias/` — LLM-as-judge and bias measurement not built
-- [x] `runner/` — variant execution, caching, concurrency not built
-- [ ] `agreement/` — judge-vs-human calibration not built
+- [x] `judge/` — LLM-as-judge prompt construction and strict verdict parsing
+- [x] `bias/` — position, verbosity, self-preference bias measurement, validated
+- [x] `runner/` — caching, retry, resumable store, bounded concurrency, dry run
+- [x] `docs/position-bias-study.md` — pre-registered design, reconciled
+      against the shipping implementation
+- [x] position-bias study pipeline (`study/`) — prompt set, simulation gate,
+      six-phase driver
+- [ ] `agreement/` — judge-vs-human calibration (kappa, Krippendorff's alpha)
+- [ ] position-bias study — run against the live API
+- [ ] results write-up

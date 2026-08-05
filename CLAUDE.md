@@ -87,8 +87,8 @@ across the codebase. Do not refactor code you were not asked to touch.
 - [x] D4 item-level draw + side-balance test
 - [x] study prompt set (Arena-Hard-Auto v0.1, seeded sample of 300)
 - [x] generation prompt template
-- [ ] simulation gate (§6.4)
-- [ ] dry run against the budget
+- [x] simulation gate (§6.4)
+- [x] dry run against the budget
 - [ ] position bias study
 - [ ] agreement module
 - [ ] README and writeup
